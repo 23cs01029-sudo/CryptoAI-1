@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 
 /* ─── Wallet helpers ─────────────────────────────────────────── */
 const getWallet = () => {
@@ -9,6 +10,62 @@ const saveWallet = (w) => {
   localStorage.setItem('wallet', JSON.stringify(w));
   window.dispatchEvent(new Event('walletUpdate'));
 };
+
+/* ─── Backend sync helpers ───────────────────────────────────── */
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/trades', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, type, coin, symbol, qty, price, pnl }),
+  }).catch(()=>{});
+};
+
+const syncWatchlist = (watchlist) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/watchlist', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, symbols: watchlist }),
+  }).catch(()=>{});
+};
+
+/* ─── Notification helper ────────────────────────────────────── */
+const EMAILJS_SERVICE_ID     = "service_7eo8n3g";
+const EMAILJS_TEMPLATE_NOTIF = "template_xpa7txr";
+const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
+
+const pushNotif = (type, title, body, meta={}) => {
+  try {
+    // 1. Save to localStorage immediately
+    const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
+    const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
+    localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
+    window.dispatchEvent(new Event('notifsUpdated'));
+
+    // 2. Email + MongoDB for trade/signal only
+    if (type === 'trade' || type === 'signal') {
+      const userEmail = getUserEmail();
+      if (userEmail) {
+        if (window.emailjs) {
+          window.emailjs.send(
+            EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
+            { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
+            EMAILJS_PUBLIC_KEY
+          ).catch(()=>{});
+        }
+        fetch('/api/notifications', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ userEmail, type, title, body, meta }),
+        }).catch(()=>{});
+      }
+    }
+  } catch {}
+};
+
 
 /* ─── All coins master list ──────────────────────────────────── */
 const ALL_COINS = [
@@ -59,6 +116,13 @@ const LineChart = ({ data, color, timeFilter='1D' }) => {
     if (wrapRef.current) ro.observe(wrapRef.current);
     return ()=>ro.disconnect();
   },[]);
+
+  // Scroll to right (latest data) whenever data or zoom changes
+  useEffect(()=>{
+    if(scrollRef.current){
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  },[data, zoom]);
 
   if (!data||data.length<2) return (
     <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8',fontSize:13}}>Loading…</div>
@@ -197,6 +261,13 @@ const CandleChart = ({ candles, timeFilter='1D' }) => {
     if (wrapRef.current) ro.observe(wrapRef.current);
     return ()=>ro.disconnect();
   },[]);
+
+  // Scroll to right (latest data) whenever candles or zoom changes
+  useEffect(()=>{
+    if(scrollRef.current){
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  },[candles, zoom]);
 
   if (!candles||candles.length<2) return (
     <div style={{height:240,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8',fontSize:13}}>Loading candles…</div>
@@ -382,6 +453,23 @@ const Watchlist = () => {
   const [alerts,  setAlerts]  = useState([]);
   const alertIdRef = useRef(0);
 
+  /* Load watchlist from MongoDB on mount — syncs across devices */
+  useEffect(() => {
+    const userEmail = getUserEmail();
+    if (!userEmail) return;
+    fetch(`/api/watchlist/${userEmail}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.symbols?.length > 0) {
+          setWatchlist(data.symbols);
+          localStorage.setItem('watchlist', JSON.stringify(data.symbols));
+        }
+      })
+      .catch(() => {}); // silent fail — localStorage used as fallback
+  }, []);
+
+  const location = useLocation();
+
   const [selected,   setSelected]   = useState(()=>{
     try {
       const sym = sessionStorage.getItem('wl_selected');
@@ -439,6 +527,22 @@ const Watchlist = () => {
       return 0;
     });
 
+  /* Fetch prices via REST immediately, then WebSocket keeps them live */
+  useEffect(()=>{
+    const symbols = ALL_COINS.map(c=>`"${c.symbol}"`).join(',');
+    fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`)
+      .then(r=>r.json())
+      .then(data=>{
+        if(!Array.isArray(data)) return;
+        data.forEach(d=>{
+          setPrices(p=>({...p,[d.symbol]:parseFloat(d.lastPrice)}));
+          setChanges(p=>({...p,[d.symbol]:parseFloat(d.priceChangePercent)}));
+          setVolumes(p=>({...p,[d.symbol]:parseFloat(d.quoteVolume)}));
+        });
+      })
+      .catch(()=>{});
+  },[]);
+
   /* ─── Live WebSocket ─── */
   useEffect(()=>{
     if (!ALL_COINS.length) return;
@@ -474,14 +578,7 @@ const Watchlist = () => {
     };
 
     ws.onerror = () => {
-      ALL_COINS.forEach(c=>{
-        const base={BTCUSDT:65000,ETHUSDT:2400,SOLUSDT:145,BNBUSDT:580,
-          XRPUSDT:0.52,DOGEUSDT:0.082,ADAUSDT:0.38,AVAXUSDT:28,
-          DOTUSDT:6.2,MATICUSDT:0.55}[c.symbol]||1;
-        setPrices(p=>({...p,[c.symbol]:base}));
-        setChanges(p=>({...p,[c.symbol]:(Math.random()*6-3)}));
-        setVolumes(p=>({...p,[c.symbol]:Math.random()*600e6}));
-      });
+      /* connection error — prices will update once WS reconnects */
     };
 
     return ()=>ws.close();
@@ -508,12 +605,15 @@ const Watchlist = () => {
     try{
       const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${iMap[tf]}&limit=${lMap[tf]}`);
       const j=await r.json();
+      if(!Array.isArray(j)||j.length===0) throw new Error('Invalid response');
       setChartData(j.map(k=>({price:parseFloat(k[4]),label:new Date(k[0]).toISOString()})));
       setCandles(j.map(k=>({o:parseFloat(k[1]),h:parseFloat(k[2]),l:parseFloat(k[3]),c:parseFloat(k[4]),v:parseFloat(k[5]),label:new Date(k[0]).toISOString()})));
     }catch{
-      const base=prices[symbol]||100;
-      setChartData(Array.from({length:80},(_,i)=>({price:base*(1+Math.sin(i/8)*.06+(Math.random()-.5)*.015),label:`T${i}`})));
-      setCandles(Array.from({length:80},(_,i)=>{const o=base*(1+Math.sin(i/6)*.04),c=o*(1+(Math.random()-.5)*.022);return{o,c,h:Math.max(o,c)*1.005,l:Math.min(o,c)*.995,v:Math.random()*1e6};}));
+      const base=prices[symbol];
+      if(base&&base>0){
+        setChartData(Array.from({length:80},(_,i)=>({price:base*(1+Math.sin(i/8)*.06+(Math.random()-.5)*.015),label:new Date(Date.now()-((79-i)*5*60000)).toISOString()})));
+        setCandles(Array.from({length:80},(_,i)=>{const o=base*(1+Math.sin(i/6)*.04),c=o*(1+(Math.random()-.5)*.022);return{o,c,h:Math.max(o,c)*1.005,l:Math.min(o,c)*.995,v:Math.random()*1e6,label:new Date(Date.now()-((79-i)*5*60000)).toISOString()};}));
+      }
     }
     setChartLoad(false);
   },[prices]);
@@ -522,6 +622,7 @@ const Watchlist = () => {
     setSelected(coin); setDetailTab('chart');
     setTimeFilter('1D'); setTradeAmt(''); setTradeQty(''); setTradeType('BUY');
     setAiSignal(null);
+    setChartData([]); setCandles([]); // clear stale data immediately
     sessionStorage.setItem('wl_selected', coin.symbol);
     fetchChart(coin.symbol,'1D');
   },[fetchChart]);
@@ -538,15 +639,17 @@ const Watchlist = () => {
     const low  = candles.length ? Math.min(...candles.slice(-20).map(c=>c.l)) : price*0.98;
     const prompt = `You are a crypto trading AI system with 4 specialist agents analyzing ${selected.short}/USDT.\n\nCurrent market data:\n- Price: $${price.toFixed(4)}\n- 24h Change: ${change.toFixed(2)}%\n- 24h Volume: $${(vol/1e6).toFixed(1)}M\n- Recent 20-candle High: $${high.toFixed(4)}\n- Recent 20-candle Low: $${low.toFixed(4)}\n- Recent prices (last 10): ${recentPrices.slice(-10).map(p=>p.toFixed(2)).join(', ')}\n\nYou must respond with ONLY valid JSON, no markdown:\n{"action":"BUY or SELL","confidence":number 40-95,"entry":"${price.toFixed(4)}","tp":"take profit 4 decimals","sl":"stop loss 4 decimals","reason":"one sentence","agents":[{"name":"Quant Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Technical Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Risk Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Sentiment Agent","verdict":"BUY or SELL or HOLD","score":number}]}`;
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/api/ai-signal', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ model:'claude-sonnet-4-20250514', max_tokens:1000,
           messages:[{role:'user',content:prompt}] }),
       });
       const data = await res.json();
       const text = data.content?.[0]?.text||'';
-      setAiSignal(JSON.parse(text.replace(/```json|```/g,'').trim()));
+      const parsed=JSON.parse(text.replace(/```json|```/g,'').trim());
+      setAiSignal(parsed);
       setDetailTab('chart');
+      pushNotif('signal', `AI Signal: ${parsed.action} ${selected.short}/USDT`, `${parsed.action} signal · ${parsed.confidence}% confidence · Entry $${parsed.entry} · TP $${parsed.tp} · SL $${parsed.sl}`, {coin:selected.short, action:parsed.action});
     } catch {
       const isBull = change >= 0;
       setAiSignal({
@@ -575,6 +678,12 @@ const Watchlist = () => {
   /* Clear dashboard selection when navigating to Watchlist */
   useEffect(()=>{ sessionStorage.removeItem('db_selected'); },[]);
 
+  /* Clear selected coin when navigating away from Watchlist */
+  useEffect(()=>{
+    setSelected(null);
+    sessionStorage.removeItem('wl_selected');
+  },[location.pathname]);
+
   /* Restore chart on mount if coming back from refresh */
   useEffect(()=>{ if(selected) fetchChart(selected.symbol,'1D'); },[]);  // eslint-disable-line
 
@@ -583,6 +692,7 @@ const Watchlist = () => {
     const next = watchlist.filter(s=>s!==symbol);
     setWatchlist(next);
     localStorage.setItem('watchlist',JSON.stringify(next));
+    syncWatchlist(next); // sync to MongoDB
     if (selected?.symbol===symbol) {
       setSelected(null);
       sessionStorage.removeItem('wl_selected');
@@ -596,12 +706,15 @@ const Watchlist = () => {
     const next=[...watchlist,symbol];
     setWatchlist(next);
     localStorage.setItem('watchlist',JSON.stringify(next));
+    syncWatchlist(next); // sync to MongoDB
     showToast('Added to watchlist');
     setShowAddModal(false);
   };
 
   /* Amount ↔ Qty */
-  const selPrice = selected ? (prices[selected.symbol]||0) : 0;
+  const selPrice = selected
+    ? (prices[selected.symbol] || (candles.length ? candles[candles.length-1].c : 0))
+    : 0;
   const onAmtChange=(val)=>{ setTradeAmt(val); if(selPrice&&val) setTradeQty((parseFloat(val)/selPrice).toFixed(6)); else setTradeQty(''); };
   const onQtyChange=(val)=>{ setTradeQty(val); if(selPrice&&val) setTradeAmt((parseFloat(val)*selPrice).toFixed(2)); else setTradeAmt(''); };
 
@@ -621,6 +734,8 @@ const Watchlist = () => {
       txns.unshift({id:Date.now(),type:'BUY',amount:cost,note:`BUY ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(txns));
       showToast(`Bought ${qty.toFixed(6)} ${selected.short} for $${cost.toFixed(2)}`);
+      pushNotif('trade', `BUY ${selected.short}/USDT`, `Bought ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Total $${cost.toFixed(2)}`, {coin:selected.short, type:'BUY'});
+      syncTrade('BUY', selected.short, selected.symbol, qty, price);
     } else {
       const owned=w[selected.short]||0;
       if (owned<=0) { showToast(`You don't own any ${selected.short}`,false); return; }
@@ -634,14 +749,19 @@ const Watchlist = () => {
       txns.unshift({id:Date.now(),type:'SELL',amount:proceeds,note:`SELL ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(txns));
       showToast(`Sold ${qty.toFixed(6)} ${selected.short} for $${proceeds.toFixed(2)}`);
+      pushNotif('trade', `SELL ${selected.short}/USDT`, `Sold ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Received $${proceeds.toFixed(2)}`, {coin:selected.short, type:'SELL'});
+      syncTrade('SELL', selected.short, selected.symbol, qty, price);
     }
-    const pos={id:Date.now(),coin:selected.short,symbol:selected.symbol,
-      type:tradeType,entry:price,qty,status:'OPEN',
-      tp:tradeType==='BUY'?price*1.05:price*0.95,
-      sl:tradeType==='BUY'?price*0.97:price*1.03,
-      pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
-    const next=[pos,...positions];
-    setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+    // Only create a position record for BUY trades
+    // SELL is a spot disposal — wallet transaction only, not a tracked open position
+    if (tradeType === 'BUY') {
+      const pos={id:Date.now(),coin:selected.short,symbol:selected.symbol,
+        type:'BUY',entry:price,qty,status:'OPEN',
+        tp:price*1.05, sl:price*0.97,
+        pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
+      const next=[pos,...positions];
+      setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+    }
     setTradeAmt(''); setTradeQty(''); setDetailTab('positions');
   };
 
@@ -650,7 +770,15 @@ const Watchlist = () => {
     const curPrice=prices[pos.symbol]||pos.current||pos.entry;
     const pnl=pos.type==='BUY'?(curPrice-pos.entry)*pos.qty:(pos.entry-curPrice)*pos.qty;
     const w=getWallet();
-    w.USDT=parseFloat(((w.USDT||0)+(pos.type==='BUY'?pos.qty*curPrice:pos.qty*curPrice)).toFixed(6));
+    if (pos.type==='BUY') {
+      // BUY close: return current market value to USDT
+      w.USDT=parseFloat(((w.USDT||0)+pos.qty*curPrice).toFixed(6));
+    } else {
+      // SELL/short close: deduct buyback cost (proceeds already paid at open)
+      w.USDT=parseFloat(((w.USDT||0)-pos.qty*curPrice).toFixed(6));
+      // Give back coins since we're buying back to close
+      w[pos.coin]=parseFloat(((w[pos.coin]||0)+pos.qty).toFixed(8));
+    }
     saveWallet(w); setWallet({...w});
     const txns=JSON.parse(localStorage.getItem('wallet_txns')||'[]');
     txns.unshift({id:Date.now(),type:'CLOSE',amount:Math.abs(pnl),
@@ -662,6 +790,7 @@ const Watchlist = () => {
       :p);
     setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
     showToast(`Closed — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`, pnl>=0);
+    syncTrade('CLOSE', pos.coin, pos.symbol, pos.qty, curPrice, parseFloat(pnl.toFixed(4)));
   };
 
   const selChange  = selected ? changes[selected.symbol] : 0;
@@ -814,21 +943,22 @@ const Watchlist = () => {
         .wl-price-block{text-align:right;flex-shrink:0;}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes signalIn{from{opacity:0;transform:translateY(8px) scale(0.98)}to{opacity:1;transform:none}}
-        @media(max-width:480px){
+        @media(max-width:600px){
           .wl-ai-btn{padding:7px 10px;}
-          .wl-ai-btn-text{display:none;}
-          .wl-coin-header{flex-wrap:wrap;padding:10px 16px 10px;}
+          .wl-ai-btn-text{display:none!important;}
+          .wl-coin-header{flex-wrap:wrap;padding:10px 14px 8px;gap:8px;}
           .wl-price-block{order:10;width:100%;text-align:left;
             display:flex;align-items:center;gap:10px;
-            padding:6px 0 0;border-top:1px solid #f8fafc;margin-top:4px;}
-          .wl-price-big{font-size:18px!important;}
+            padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
+          .wl-price-big{font-size:20px!important;}
+          .wl-ai-btn-wrap{flex-shrink:0;}
         }
       `}</style>
 
       <div className="wl-page">
         {selected ? (
           /* ── COIN DETAIL (same as Dashboard) ── */
-          <div className="fade-in" style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,background:'white'}}>
+          <div className="fade-in" style={{display:'flex',flexDirection:'column',background:'white'}}>
 
             {/* Header */}
             <div className="wl-coin-header" style={{display:'flex',alignItems:'center',gap:10,padding:'14px 20px 12px',
@@ -872,9 +1002,9 @@ const Watchlist = () => {
               </button>
 
               {/* Price block — moves to own row on mobile */}
-              <div className="wl-price-block" style={{textAlign:'right',flexShrink:0}}>
+              <div className="wl-price-block" style={{textAlign:'right',flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
                 <div className="wl-price-big" style={{fontSize:22,fontWeight:700,fontFamily:"'Sora',sans-serif",
-                  color:selUp?'#16a34a':'#dc2626',letterSpacing:'-0.5px',lineHeight:1.1}}>
+                  color:selUp?'#16a34a':'#dc2626',letterSpacing:'-0.5px',lineHeight:1}}>
                   ${selPrice?selPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—'}
                 </div>
                 <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:5,
@@ -950,7 +1080,7 @@ const Watchlist = () => {
             </div>
 
             {/* Tab content */}
-            <div style={{flex:1,overflowY:'auto',background:'#f8fafc'}}>
+            <div style={{background:'#f8fafc'}}>
 
               {detailTab==='chart'&&(
                 <div style={{padding:'14px 20px'}}>
@@ -995,29 +1125,31 @@ const Watchlist = () => {
                       </div>
                       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:12}}>
                         {[{l:'Entry',v:`$${aiSignal.entry}`,c:'#0f172a'},{l:'Take Profit',v:`$${aiSignal.tp}`,c:'#16a34a'},{l:'Stop Loss',v:`$${aiSignal.sl}`,c:'#dc2626'}].map(x=>(
-                          <div key={x.l} style={{background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #f1f5f9'}}>
-                            <div style={{fontSize:9,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:3}}>{x.l}</div>
-                            <div style={{fontSize:13,fontWeight:700,color:x.c,fontFamily:"'Sora',sans-serif"}}>{x.v}</div>
+                          <div key={x.l} style={{background:'#f8fafc',borderRadius:9,padding:'9px 10px',border:'1px solid #f1f5f9',minWidth:0}}>
+                            <div style={{fontSize:9,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:3,whiteSpace:'nowrap'}}>{x.l}</div>
+                            <div style={{fontSize:12,fontWeight:700,color:x.c,fontFamily:"'Sora',sans-serif",wordBreak:'break-all',lineHeight:1.3}}>{x.v}</div>
                           </div>
                         ))}
                       </div>
                       <div style={{borderTop:'1px solid #f1f5f9',paddingTop:10,marginBottom:10}}>
                         <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:8}}>Agent verdicts</div>
-                        {aiSignal.agents.map(a=>(
-                          <div key={a.name} style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:5}}>
-                            <div style={{display:'flex',alignItems:'center',gap:6}}>
-                              <div style={{width:6,height:6,borderRadius:'50%',
+                        {aiSignal.agents?.map(a=>(
+                          <div key={a.name} style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6,gap:8}}>
+                            <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}>
+                              <div style={{width:6,height:6,borderRadius:'50%',flexShrink:0,
                                 background:a.verdict==='BUY'?'#22c55e':a.verdict==='SELL'?'#ef4444':'#94a3b8'}}/>
-                              <span style={{fontSize:12,color:'#64748b'}}>{a.name}</span>
+                              <span style={{fontSize:12,color:'#64748b',whiteSpace:'nowrap'}}>{a.name}</span>
                             </div>
-                            <div style={{display:'flex',alignItems:'center',gap:6}}>
-                              <span style={{fontSize:11,fontWeight:600,color:a.verdict==='BUY'?'#16a34a':a.verdict==='SELL'?'#dc2626':'#94a3b8'}}>{a.verdict}</span>
-                              <span style={{fontSize:10,color:'#94a3b8'}}>{a.score}%</span>
+                            <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                              <span style={{fontSize:11,fontWeight:700,padding:'1px 8px',borderRadius:5,
+                                background:a.verdict==='BUY'?'rgba(34,197,94,0.1)':a.verdict==='SELL'?'rgba(239,68,68,0.1)':'rgba(148,163,184,0.1)',
+                                color:a.verdict==='BUY'?'#16a34a':a.verdict==='SELL'?'#dc2626':'#94a3b8'}}>{a.verdict}</span>
+                              <span style={{fontSize:11,color:'#94a3b8',minWidth:28,textAlign:'right'}}>{a.score}%</span>
                             </div>
                           </div>
                         ))}
                       </div>
-                      <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:9,fontSize:12,color:'#475569',lineHeight:1.6,fontStyle:'italic'}}>
+                      <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:9,fontSize:12,color:'#475569',lineHeight:1.6,fontStyle:'italic',wordBreak:'break-word'}}>
                         "{aiSignal.reason}"
                       </div>
                     </div>
@@ -1116,7 +1248,16 @@ const Watchlist = () => {
                   {positions.filter(p=>p.symbol===selected.symbol).length===0?(
                     <div style={{textAlign:'center',color:'#94a3b8',padding:'40px 0',fontSize:13}}>No positions yet</div>
                   ):positions.filter(p=>p.symbol===selected.symbol).map(p=>{
-                    const isClosed=p.status==='CLOSED', pnlVal=isClosed?p.closePnl:p.pnl;
+                    const isClosed=p.status==='CLOSED';
+                    const liveCur = isClosed
+                      ? (p.closePrice||p.entry)
+                      : (prices[p.symbol]||p.current||p.entry);
+                    const pnlVal = isClosed
+                      ? (p.closePnl||0)
+                      : (p.type==='BUY'?(liveCur-p.entry)*p.qty:(p.entry-liveCur)*p.qty);
+                    const pnlPct = p.entry>0
+                      ? (p.type==='BUY'?((liveCur-p.entry)/p.entry*100):((p.entry-liveCur)/p.entry*100))
+                      : 0;
                     return(
                       <div key={p.id} style={{background:'white',border:`1px solid ${isClosed?'#f1f5f9':pnlVal>=0?'rgba(34,197,94,0.15)':'rgba(239,68,68,0.15)'}`,
                         borderRadius:12,padding:16,marginBottom:10,boxShadow:'0 1px 4px rgba(0,0,0,0.04)',opacity:isClosed?0.65:1}}>
@@ -1132,11 +1273,18 @@ const Watchlist = () => {
                             {isClosed&&<span style={{padding:'2px 8px',borderRadius:5,fontSize:10,fontWeight:600,background:'#f1f5f9',color:'#64748b',border:'1px solid #e2e8f0'}}>Closed</span>}
                           </div>
                           <div style={{display:'flex',alignItems:'center',gap:8}}>
-                            <span style={{fontSize:14,fontWeight:700,color:pnlVal>=0?'#16a34a':'#dc2626',fontFamily:"'Sora',sans-serif"}}>
-                              {pnlVal>=0?'+':''}${pnlVal?.toFixed(4)}
-                            </span>
+                            <div style={{textAlign:'right'}}>
+                              <div style={{fontSize:14,fontWeight:700,color:pnlVal>=0?'#16a34a':'#dc2626',fontFamily:"'Sora',sans-serif"}}>
+                                {pnlVal>=0?'+':''}${pnlVal.toFixed(4)}
+                              </div>
+                              {!isClosed&&(
+                                <div style={{fontSize:11,fontWeight:600,color:pnlVal>=0?'#16a34a':'#dc2626'}}>
+                                  {pnlPct>=0?'+':''}{pnlPct.toFixed(2)}%
+                                </div>
+                              )}
+                            </div>
                             {!isClosed&&(
-                              <button onClick={()=>{if(window.confirm(`Close position? P&L: ${pnlVal>=0?'+':''}$${pnlVal?.toFixed(4)}`))closePosition(p);}}
+                              <button onClick={()=>{if(window.confirm(`Close position? P&L: ${pnlVal>=0?'+':''}$${pnlVal.toFixed(4)}`))closePosition(p);}}
                                 style={{padding:'5px 10px',borderRadius:8,border:'1.5px solid rgba(239,68,68,0.3)',
                                   background:'rgba(239,68,68,0.05)',color:'#dc2626',fontSize:11,fontWeight:600,
                                   cursor:'pointer',fontFamily:"'DM Sans',sans-serif"}}
@@ -1150,7 +1298,7 @@ const Watchlist = () => {
                         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
                           {[{l:'Entry',v:`$${p.entry.toFixed(4)}`},{l:'TP',v:`$${p.tp.toFixed(2)}`},
                             {l:'SL',v:`$${p.sl.toFixed(2)}`},{l:'Qty',v:p.qty},
-                            {l:isClosed?'Closed @':'Current',v:`$${isClosed?p.closePrice?.toFixed(4):(p.current||p.entry).toFixed(4)}`},
+                            {l:isClosed?'Closed @':'Current',v:`$${liveCur.toFixed(4)}`},
                             {l:'Time',v:p.time.split(',')[0]}].map(x=>(
                             <div key={x.l}>
                               <div style={{fontSize:9,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:2}}>{x.l}</div>

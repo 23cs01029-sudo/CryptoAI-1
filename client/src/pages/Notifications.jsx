@@ -5,10 +5,18 @@ const getNotifs = () => {
   try { return JSON.parse(localStorage.getItem('notifications') || '[]'); }
   catch { return []; }
 };
-const saveNotifs = (n) => localStorage.setItem('notifications', JSON.stringify(n));
+const saveNotifs = (n) => {
+  localStorage.setItem('notifications', JSON.stringify(n));
+  window.dispatchEvent(new Event('notifUpdate'));
+};
 
 const getPositions = () => {
   try { return JSON.parse(localStorage.getItem('positions') || '[]'); }
+  catch { return []; }
+};
+
+const getWatchlist = () => {
+  try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); }
   catch { return []; }
 };
 
@@ -86,44 +94,57 @@ const Notifications = () => {
   const [filter,     setFilter]     = useState('all');
   const [prices,     setPrices]     = useState({});
   const [prevChanges,setPrevChanges]= useState({});
+  const [watchlist,  setWatchlist]  = useState(getWatchlist);
   const wsRef = useRef(null);
 
-  /* Seed if empty */
+  /* Keep watchlist in sync when user adds/removes coins */
   useEffect(() => {
-    if (getNotifs().length === 0) {
-      const seed = [
-        makeNotif('system','Welcome to CryptoAI! 🎉','Your account is ready. Start by exploring the Dashboard and placing your first trade.'),
-        makeNotif('signal','AI Signal: BTC BUY','Quant Agent detected bullish momentum. Entry $84,200 · TP $88,800 · SL $81,500 · Confidence 76%',{coin:'BTC',action:'BUY'}),
-        makeNotif('price','SOL price alert 🚀','SOL/USDT moved +2.3% in the last hour. Current price: $147.80',{coin:'SOL',change:2.3}),
-        makeNotif('trade','Trade executed: BUY SOL','Bought 1.000000 SOL @ $145.00 · TP: $152.25 · SL: $140.65',{coin:'SOL',type:'BUY'}),
-      ];
-      seed.forEach((n,i)=>{ n.time=new Date(Date.now()-i*7200000).toISOString(); });
-      saveNotifs(seed); setNotifs(seed);
+    const sync = () => setWatchlist(getWatchlist());
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus',   sync);
+    return () => { window.removeEventListener('storage', sync); window.removeEventListener('focus', sync); };
+  }, []);
+
+  /* Seed only once ever — just the welcome message on first account creation */
+  useEffect(() => {
+    const hasSeeded = localStorage.getItem('notifs_seeded');
+    if (!hasSeeded) {
+      const welcome = makeNotif('system',
+        'Welcome to CryptoAI! 🎉',
+        'Your account is ready. Explore the Dashboard and place your first trade to get started.'
+      );
+      saveNotifs([welcome]); setNotifs([welcome]);
+      localStorage.setItem('notifs_seeded', '1');
     }
   }, []);
 
-  /* Listen for trade events */
+  /* Sync from localStorage whenever any page writes a notification */
   useEffect(() => {
-    const onTrade = () => {
-      const pos = getPositions();
-      const latest = pos[0]; if (!latest) return;
-      const existing = getNotifs();
-      if (existing.some(n => n.meta?.posId === latest.id)) return;
-      const n = makeNotif('trade',
-        `Trade: ${latest.type} ${latest.coin}/USDT`,
-        `${latest.type==='BUY'?'Bought':'Sold'} ${latest.qty} ${latest.coin} @ $${parseFloat(latest.entry).toFixed(2)} · TP $${parseFloat(latest.tp).toFixed(2)} · SL $${parseFloat(latest.sl).toFixed(2)}`,
-        { coin:latest.coin, type:latest.type, posId:latest.id }
-      );
-      const next = [n,...existing]; saveNotifs(next); setNotifs(next);
+    const sync = () => {
+      setNotifs(getNotifs());
     };
-    window.addEventListener('walletUpdate', onTrade);
-    return () => window.removeEventListener('walletUpdate', onTrade);
+    window.addEventListener('notifsUpdated', sync);
+    window.addEventListener('focus', sync); // also sync when tab gets focus
+    return () => {
+      window.removeEventListener('notifsUpdated', sync);
+      window.removeEventListener('focus', sync);
+    };
+  }, []);
+
+  /* REST fetch prices immediately so live monitor strip shows on load */
+  useEffect(() => {
+    const symbols = ALL_COINS.map(c => `"${c.symbol}"`).join(',');
+    fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) data.forEach(d => setPrices(p => ({ ...p, [d.symbol]: parseFloat(d.lastPrice) }))); })
+      .catch(() => {});
   }, []);
 
   /* WebSocket price alerts */
   useEffect(() => {
+    let ws = null;
     const t = setTimeout(() => {
-      const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${ALL_COINS.map(c=>`${c.symbol.toLowerCase()}@ticker`).join('/')}`);
+      ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${ALL_COINS.map(c=>`${c.symbol.toLowerCase()}@ticker`).join('/')}`);
       wsRef.current = ws;
       ws.onmessage = e => {
         try {
@@ -133,7 +154,10 @@ const Notifications = () => {
           setPrices(p=>({...p,[sym]:price}));
           setPrevChanges(prev => {
             const old = prev[sym];
-            if (old !== undefined && Math.abs(chg - old) >= 2) {
+            // Only fire alert if coin is in user's watchlist
+            const watchlisted = getWatchlist();
+            const isWatched = watchlisted.includes(sym);
+            if (isWatched && old !== undefined && Math.abs(chg - old) >= 2) {
               const coin = ALL_COINS.find(c=>c.symbol===sym)?.short;
               const dir  = chg > old ? '🚀 surged' : '📉 dropped';
               const n = makeNotif('price',`${coin} price alert`,
@@ -145,14 +169,19 @@ const Notifications = () => {
           });
         } catch {}
       };
-    }, 200);
-    return () => { clearTimeout(t); wsRef.current?.close(); };
+      ws.onerror = () => {};
+    }, 500);
+    return () => { clearTimeout(t); if(ws) ws.close(); wsRef.current = null; };
   }, []);
 
   const markRead    = id  => { const n=notifs.map(x=>x.id===id?{...x,read:true}:x); setNotifs(n); saveNotifs(n); };
   const markAllRead = ()  => { const n=notifs.map(x=>({...x,read:true})); setNotifs(n); saveNotifs(n); };
   const deleteNotif = id  => { const n=notifs.filter(x=>x.id!==id); setNotifs(n); saveNotifs(n); };
-  const clearAll    = ()  => { saveNotifs([]); setNotifs([]); };
+  const clearAll = () => {
+    saveNotifs([]); setNotifs([]);
+    // Keep notifs_seeded flag — so clearing does NOT bring back the seed notifications
+    // notifs_seeded stays as '1' → page will never re-seed after a clear
+  };
 
   const unread = notifs.filter(n=>!n.read).length;
 
@@ -256,14 +285,14 @@ const Notifications = () => {
           )}
         </div>
 
-        {/* Live monitor strip */}
-        {Object.keys(prices).length>0&&(
+        {/* Live monitor strip — only watchlisted coins */}
+        {watchlist.length>0&&Object.keys(prices).length>0&&(
           <div style={{ marginTop:20,background:'white',borderRadius:14,border:'1px solid #f1f5f9',padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,0.04)' }}>
             <div style={{ fontSize:11,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',fontWeight:600,marginBottom:12 }}>
-              🔴 Live · Monitoring for price alerts (≥2% move triggers notification)
+              🔴 Live · Watching {watchlist.length} coin{watchlist.length!==1?'s':''} for price alerts (≥2% move)
             </div>
             <div style={{ display:'flex',flexWrap:'wrap',gap:8 }}>
-              {ALL_COINS.filter(c=>prices[c.symbol]).map(c=>(
+              {ALL_COINS.filter(c=>watchlist.includes(c.symbol)&&prices[c.symbol]).map(c=>(
                 <div key={c.symbol} style={{ display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:8,background:'#f8fafc',border:'1px solid #f1f5f9' }}>
                   <div style={{ width:6,height:6,borderRadius:'50%',background:c.color }}/>
                   <span style={{ fontSize:11,fontWeight:600,color:'#0f172a',fontFamily:"'Sora',sans-serif" }}>{c.short}</span>

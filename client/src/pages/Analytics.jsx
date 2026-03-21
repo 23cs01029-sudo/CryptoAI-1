@@ -132,29 +132,51 @@ const Analytics = () => {
   const [tab,     setTab]     = useState('overview');
   const wsRef = useRef(null);
 
-  /* Live prices */
+  /* REST fetch immediately + WS for live updates */
   useEffect(() => {
-    const t = setTimeout(() => {
-      const streams = ALL_COINS.map(c => `${c.symbol.toLowerCase()}@ticker`).join('/');
-      const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-      wsRef.current = ws;
-      ws.onmessage = e => {
-        try {
-          const d = (JSON.parse(e.data)).data;
-          if (d?.s) {
-            setPrices(p  => ({ ...p, [d.s]: parseFloat(d.c) }));
-            setChanges(p => ({ ...p, [d.s]: parseFloat(d.P) }));
-          }
-        } catch {}
-      };
-    }, 200);
-    return () => { clearTimeout(t); wsRef.current?.close(); };
+    const symbols = ALL_COINS.map(c => `"${c.symbol}"`).join(',');
+    fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`)
+      .then(r => r.json())
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        data.forEach(d => {
+          setPrices(p  => ({ ...p, [d.symbol]: parseFloat(d.lastPrice) }));
+          setChanges(p => ({ ...p, [d.symbol]: parseFloat(d.priceChangePercent) }));
+        });
+      }).catch(() => {});
   }, []);
 
-  /* ── Derived analytics ── */
+  useEffect(() => {
+    const streams = ALL_COINS.map(c => `${c.symbol.toLowerCase()}@ticker`).join('/');
+    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+    wsRef.current = ws;
+    ws.onmessage = e => {
+      try {
+        const d = (JSON.parse(e.data)).data;
+        if (d?.s) {
+          setPrices(p  => ({ ...p, [d.s]: parseFloat(d.c) }));
+          setChanges(p => ({ ...p, [d.s]: parseFloat(d.P) }));
+        }
+      } catch {}
+    };
+    ws.onerror = () => {};
+    return () => ws.close();
+  }, []);
+
+  /* Sync data when wallet changes (trade placed from another page) */
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const sync = () => setTick(t => t + 1);
+    window.addEventListener('walletUpdate', sync);
+    window.addEventListener('focus', sync);
+    return () => { window.removeEventListener('walletUpdate', sync); window.removeEventListener('focus', sync); };
+  }, []);
+
+  /* ── Derived analytics (reactive to walletUpdate via tick) ── */
   const positions = getPositions();
   const wallet    = getWallet();
   const txns      = getTxns();
+  void tick; 
 
   const closed  = positions.filter(p => p.status === 'CLOSED');
   const open    = positions.filter(p => p.status !== 'CLOSED');
@@ -210,14 +232,19 @@ const Analytics = () => {
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
 
-  // Portfolio growth line (from txn history)
-  const depositTxns = txns.filter(t => t.type === 'DEPOSIT' || t.type === 'RESET');
+  // Portfolio growth line (from txn history — parse actual P&L from CLOSE note)
   let runningBal = 10000;
   const growthPoints = [10000];
   [...txns].reverse().forEach(t => {
-    if (t.type === 'CLOSE') runningBal += (t.amount || 0) * (t.note?.includes('+') ? 1 : -1);
+    if (t.type === 'CLOSE') {
+      // Note format: "CLOSE BUY 1 BTC @ $65000 — P&L: +$123.4"
+      const m = t.note?.match(/P&L: ([+-]?\$?[\d.]+)/);
+      const pnl = m ? parseFloat(m[1].replace('$','')) : 0;
+      runningBal += pnl;
+    }
     if (t.type === 'DEPOSIT') runningBal += (t.amount || 0);
-    growthPoints.push(runningBal);
+    if (t.type === 'RESET') runningBal = t.amount || 10000;
+    growthPoints.push(Math.max(0, runningBal));
   });
   growthPoints.push(totalPortfolio);
 
@@ -315,7 +342,7 @@ const Analytics = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
                   <span style={{ fontSize: 11, color: '#94a3b8' }}>Started: $10,000</span>
                   <span style={{ fontSize: 11, fontWeight: 600, color: totalPortfolio >= 10000 ? '#16a34a' : '#dc2626' }}>
-                    Now: ${totalPortfolio.toFixed(2)} ({((totalPortfolio - 10000) / 100).toFixed(2)}%)
+                    Now: ${totalPortfolio.toFixed(2)} ({((totalPortfolio - 10000) / 10000 * 100).toFixed(2)}%)
                   </span>
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 
 /* ─── Wallet helpers ─────────────────────────────────────────── */
 const getWallet = () => {
@@ -13,6 +14,66 @@ const getWatchlist = () => {
   try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); }
   catch { return []; }
 };
+
+/* ─── Backend sync helper ────────────────────────────────────── */
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+// Save trade to MongoDB
+const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/trades', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, type, coin, symbol, qty, price, pnl }),
+  }).catch(()=>{});
+};
+
+// Save watchlist to MongoDB
+const syncWatchlist = (watchlist) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/watchlist', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, symbols: watchlist }),
+  }).catch(()=>{});
+};
+
+/* ─── Notification helper ────────────────────────────────────── */
+const EMAILJS_SERVICE_ID     = "service_7eo8n3g";
+const EMAILJS_TEMPLATE_NOTIF = "template_xpa7txr";
+const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
+
+const pushNotif = (type, title, body, meta={}) => {
+  try {
+    // 1. Save to localStorage immediately
+    const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
+    const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
+    localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
+    window.dispatchEvent(new Event('notifsUpdated'));
+
+    // 2. Email + MongoDB for trade/signal only
+    if (type === 'trade' || type === 'signal') {
+      const userEmail = getUserEmail();
+      if (userEmail) {
+        // EmailJS — works without backend
+        if (window.emailjs) {
+          window.emailjs.send(
+            EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
+            { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
+            EMAILJS_PUBLIC_KEY
+          ).catch(()=>{});
+        }
+        // MongoDB via backend
+        fetch('/api/notifications', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ userEmail, type, title, body, meta }),
+        }).catch(()=>{});
+      }
+    }
+  } catch {}
+};
+
 
 /* ─── AnimatedList ───────────────────────────────────────────── */
 const AnimatedItem = ({ children, index, onMouseEnter, onClick }) => {
@@ -139,6 +200,13 @@ const LineChart = ({ data, color, timeFilter='1D' }) => {
     if (wrapRef.current) ro.observe(wrapRef.current);
     return ()=>ro.disconnect();
   },[]);
+
+  // Scroll to right (latest data) whenever data or zoom changes
+  useEffect(()=>{
+    if(scrollRef.current){
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  },[data, zoom]);
 
   if (!data||data.length<2) return (
     <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8',fontSize:13}}>Loading…</div>
@@ -278,6 +346,13 @@ const CandleChart = ({ candles, timeFilter='1D' }) => {
     return ()=>ro.disconnect();
   },[]);
 
+  // Scroll to right (latest data) whenever candles or zoom changes
+  useEffect(()=>{
+    if(scrollRef.current){
+      scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+    }
+  },[candles, zoom]);
+
   if (!candles||candles.length<2) return (
     <div style={{height:240,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8',fontSize:13}}>Loading candles…</div>
   );
@@ -410,10 +485,10 @@ const AISignalCard = ({ signal, onClose }) => {
       animation:'signalIn .3s cubic-bezier(.22,1,.36,1) both',
     }}>
       {/* Header */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12,flexWrap:'wrap',gap:8}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <div style={{
-            width:32,height:32,borderRadius:'50%',
+            width:32,height:32,borderRadius:'50%',flexShrink:0,
             background:`linear-gradient(135deg,${isBuy?'#6366f1,#22c55e':'#6366f1,#ef4444'})`,
             display:'flex',alignItems:'center',justifyContent:'center',
           }}>
@@ -429,17 +504,17 @@ const AISignalCard = ({ signal, onClose }) => {
             <div style={{fontSize:10,color:'#94a3b8'}}>Multi-agent analysis</div>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:'auto'}}>
           <div style={{
-            padding:'4px 12px',borderRadius:20,fontSize:13,fontWeight:700,
+            padding:'5px 16px',borderRadius:20,fontSize:14,fontWeight:700,
             background:isBuy?'#22c55e':'#ef4444',color:'white',
             fontFamily:"'Sora',sans-serif",letterSpacing:'.5px',
           }}>
             {signal.action}
           </div>
           <button onClick={onClose}
-            style={{background:'#f1f5f9',border:'none',borderRadius:'50%',width:24,height:24,
-              cursor:'pointer',color:'#64748b',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            style={{background:'#f1f5f9',border:'none',borderRadius:'50%',width:26,height:26,
+              cursor:'pointer',color:'#64748b',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
             ✕
           </button>
         </div>
@@ -461,16 +536,17 @@ const AISignalCard = ({ signal, onClose }) => {
         </div>
       </div>
 
-      {/* Entry / TP / SL */}
+      {/* Entry / TP / SL — stacks to 1 col on very small screens */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:12}}>
         {[
-          {l:'Entry',v:`$${signal.entry}`,c:'#0f172a'},
-          {l:'Take Profit',v:`$${signal.tp}`,c:'#16a34a'},
-          {l:'Stop Loss',v:`$${signal.sl}`,c:'#dc2626'},
+          {l:'Entry',     v:`$${signal.entry}`, c:'#0f172a'},
+          {l:'Take Profit',v:`$${signal.tp}`,   c:'#16a34a'},
+          {l:'Stop Loss', v:`$${signal.sl}`,     c:'#dc2626'},
         ].map(x=>(
-          <div key={x.l} style={{background:'#f8fafc',borderRadius:9,padding:'9px 12px',border:'1px solid #f1f5f9'}}>
-            <div style={{fontSize:9,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:3}}>{x.l}</div>
-            <div style={{fontSize:13,fontWeight:700,color:x.c,fontFamily:"'Sora',sans-serif"}}>{x.v}</div>
+          <div key={x.l} style={{background:'#f8fafc',borderRadius:9,padding:'9px 10px',border:'1px solid #f1f5f9',minWidth:0}}>
+            <div style={{fontSize:9,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:3,whiteSpace:'nowrap'}}>{x.l}</div>
+            <div style={{fontSize:12,fontWeight:700,color:x.c,fontFamily:"'Sora',sans-serif",
+              wordBreak:'break-all',lineHeight:1.3}}>{x.v}</div>
           </div>
         ))}
       </div>
@@ -480,20 +556,21 @@ const AISignalCard = ({ signal, onClose }) => {
         <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:8}}>
           Agent verdicts
         </div>
-        <div style={{display:'flex',flexDirection:'column',gap:5}}>
-          {signal.agents.map(a=>(
-            <div key={a.name} style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <div style={{width:6,height:6,borderRadius:'50%',
+        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+          {signal.agents?.map(a=>(
+            <div key={a.name} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}>
+                <div style={{width:6,height:6,borderRadius:'50%',flexShrink:0,
                   background:a.verdict==='BUY'?'#22c55e':a.verdict==='SELL'?'#ef4444':'#94a3b8'}}/>
-                <span style={{fontSize:12,color:'#64748b'}}>{a.name}</span>
+                <span style={{fontSize:12,color:'#64748b',whiteSpace:'nowrap'}}>{a.name}</span>
               </div>
-              <div style={{display:'flex',alignItems:'center',gap:6}}>
-                <span style={{fontSize:11,fontWeight:600,
+              <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                <span style={{fontSize:11,fontWeight:700,padding:'1px 8px',borderRadius:5,
+                  background:a.verdict==='BUY'?'rgba(34,197,94,0.1)':a.verdict==='SELL'?'rgba(239,68,68,0.1)':'rgba(148,163,184,0.1)',
                   color:a.verdict==='BUY'?'#16a34a':a.verdict==='SELL'?'#dc2626':'#94a3b8'}}>
                   {a.verdict}
                 </span>
-                <span style={{fontSize:10,color:'#94a3b8'}}>{a.score}%</span>
+                <span style={{fontSize:11,color:'#94a3b8',minWidth:28,textAlign:'right'}}>{a.score}%</span>
               </div>
             </div>
           ))}
@@ -502,7 +579,7 @@ const AISignalCard = ({ signal, onClose }) => {
 
       {/* Reasoning */}
       <div style={{marginTop:10,padding:'9px 12px',background:'#f8fafc',borderRadius:9,
-        fontSize:12,color:'#475569',lineHeight:1.6,fontStyle:'italic'}}>
+        fontSize:12,color:'#475569',lineHeight:1.6,fontStyle:'italic',wordBreak:'break-word'}}>
         "{signal.reason}"
       </div>
     </div>
@@ -669,6 +746,8 @@ const Dashboard = () => {
   const [changes, setChanges] = useState({});
   const [volumes, setVolumes] = useState({});
 
+  const location = useLocation();
+
   const [selected,   setSelected]   = useState(()=>{
     try {
       const sym = sessionStorage.getItem('db_selected');
@@ -719,6 +798,23 @@ const Dashboard = () => {
   const [aiLoading,   setAiLoading]   = useState(false);
 
   /* Binance WebSocket */
+  /* Fetch prices via REST immediately, then WebSocket keeps them live */
+  useEffect(()=>{
+    // Immediate price fetch so list isn't blank while WS connects
+    const symbols = COINS.map(c=>`"${c.symbol}"`).join(',');
+    fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${symbols}]`)
+      .then(r=>r.json())
+      .then(data=>{
+        if(!Array.isArray(data)) return;
+        data.forEach(d=>{
+          setPrices(p=>({...p,[d.symbol]:parseFloat(d.lastPrice)}));
+          setChanges(p=>({...p,[d.symbol]:parseFloat(d.priceChangePercent)}));
+          setVolumes(p=>({...p,[d.symbol]:parseFloat(d.quoteVolume)}));
+        });
+      })
+      .catch(()=>{});
+  },[]);
+
   useEffect(()=>{
     const streams=COINS.map(c=>`${c.symbol.toLowerCase()}@ticker`).join('/');
     const ws=new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
@@ -729,16 +825,7 @@ const Dashboard = () => {
       setChanges(p=>({...p,[s]:parseFloat(d.P)}));
       setVolumes(p=>({...p,[s]:parseFloat(d.q)}));
     };
-    ws.onerror=()=>{
-      COINS.forEach(c=>{
-        const base={BTCUSDT:65000,ETHUSDT:2400,SOLUSDT:145,BNBUSDT:580,
-          XRPUSDT:0.52,DOGEUSDT:0.082,ADAUSDT:0.38,AVAXUSDT:28,
-          DOTUSDT:6.2,MATICUSDT:0.55}[c.symbol]||1;
-        setPrices(p=>({...p,[c.symbol]:base}));
-        setChanges(p=>({...p,[c.symbol]:(Math.random()*6-3)}));
-        setVolumes(p=>({...p,[c.symbol]:Math.random()*600e6}));
-      });
-    };
+    ws.onerror=()=>{ /* WS failed — REST prices still shown */ };
     return()=>ws.close();
   },[]);
 
@@ -763,12 +850,18 @@ const Dashboard = () => {
     try{
       const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${iMap[tf]}&limit=${lMap[tf]}`);
       const j=await r.json();
+      // Validate response is an array of klines (not an error object)
+      if(!Array.isArray(j)||j.length===0) throw new Error('Invalid response');
       setChartData(j.map(k=>({price:parseFloat(k[4]),label:new Date(k[0]).toISOString()})));
       setCandles(j.map(k=>({o:parseFloat(k[1]),h:parseFloat(k[2]),l:parseFloat(k[3]),c:parseFloat(k[4]),v:parseFloat(k[5]),label:new Date(k[0]).toISOString()})));
     }catch{
-      const base=prices[symbol]||100;
-      setChartData(Array.from({length:80},(_,i)=>({price:base*(1+Math.sin(i/8)*.06+(Math.random()-.5)*.015),label:`T${i}`})));
-      setCandles(Array.from({length:80},(_,i)=>{const o=base*(1+Math.sin(i/6)*.04),c=o*(1+(Math.random()-.5)*.022);return{o,c,h:Math.max(o,c)*1.005,l:Math.min(o,c)*.995,v:Math.random()*1e6};}));
+      // Use live WebSocket price if available, otherwise leave chart empty
+      const base=prices[symbol];
+      if(base&&base>0){
+        setChartData(Array.from({length:80},(_,i)=>({price:base*(1+Math.sin(i/8)*.06+(Math.random()-.5)*.015),label:new Date(Date.now()-((79-i)*5*60000)).toISOString()})));
+        setCandles(Array.from({length:80},(_,i)=>{const o=base*(1+Math.sin(i/6)*.04),c=o*(1+(Math.random()-.5)*.022);return{o,c,h:Math.max(o,c)*1.005,l:Math.min(o,c)*.995,v:Math.random()*1e6,label:new Date(Date.now()-((79-i)*5*60000)).toISOString()};}));
+      }
+      // If no price yet, leave empty — chart shows "Loading..." until data arrives
     }
     setChartLoad(false);
   },[prices]);
@@ -777,12 +870,19 @@ const Dashboard = () => {
     setSelected(coin); setDetailTab('chart');
     setTimeFilter('1D'); setTradeAmt(''); setTradeQty(''); setTradeType('BUY');
     setAiSignal(null);
+    setChartData([]); setCandles([]); // clear stale data immediately
     sessionStorage.setItem('db_selected', coin.symbol);
     fetchChart(coin.symbol,'1D');
   },[fetchChart]);
 
   /* Clear watchlist selection when navigating to Dashboard */
   useEffect(()=>{ sessionStorage.removeItem('wl_selected'); },[]);
+
+  /* Clear selected coin when navigating away from Dashboard */
+  useEffect(()=>{
+    setSelected(null);
+    sessionStorage.removeItem('db_selected');
+  },[location.pathname]);
 
   /* Restore chart on mount if coming back from refresh */
   useEffect(()=>{ if(selected) fetchChart(selected.symbol,'1D'); },[]);  // eslint-disable-line
@@ -794,12 +894,16 @@ const Dashboard = () => {
     setWatchlist(prev=>{
       const next=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];
       localStorage.setItem('watchlist',JSON.stringify(next));
+      syncWatchlist(next); // sync to MongoDB
       return next;
     });
   };
 
   /* ── Amount ↔ Qty sync ── */
-  const selPrice = selected ? (prices[selected.symbol]||0) : 0;
+  // Use live WS price, fall back to latest candle close if WS not yet received
+  const selPrice = selected
+    ? (prices[selected.symbol] || (candles.length ? candles[candles.length-1].c : 0))
+    : 0;
   const onAmtChange = (val) => {
     setTradeAmt(val);
     if (selPrice && val) setTradeQty((parseFloat(val)/selPrice).toFixed(6));
@@ -823,9 +927,16 @@ const Dashboard = () => {
 
     // Return funds to wallet
     const w = getWallet();
-    w.USDT = parseFloat(((w.USDT||0) + (pos.type==='BUY' ? proceeds : pos.qty * curPrice)).toFixed(6));
-    // If it was a BUY position, coin was already deducted at buy time — no coin balance change needed
-    // If it was a SELL position, coin was already deducted at sell time — no coin balance change needed
+    if (pos.type === 'BUY') {
+      // BUY close: return current value to USDT (coin was never in wallet — position held it)
+      w.USDT = parseFloat(((w.USDT||0) + proceeds).toFixed(6));
+    } else {
+      // SELL/short close: deduct buyback cost (proceeds were already added to USDT at open)
+      // Net effect = proceeds_at_open - buyback_cost = P&L
+      w.USDT = parseFloat(((w.USDT||0) - (pos.qty * curPrice)).toFixed(6));
+      // Give back the coins since we're buying back
+      w[pos.coin] = parseFloat(((w[pos.coin]||0) + pos.qty).toFixed(8));
+    }
     saveWallet(w);
     setWallet({...w});
 
@@ -849,6 +960,7 @@ const Dashboard = () => {
     localStorage.setItem('positions', JSON.stringify(next));
 
     showToast(`Position closed — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`, pnl>=0);
+    syncTrade('CLOSE', pos.coin, pos.symbol, pos.qty, curPrice, parseFloat(pnl.toFixed(4)));
   };
 
   /* ── AI Signal ── */
@@ -891,7 +1003,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
 }`;
 
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/api/ai-signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -906,6 +1018,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
       const parsed = JSON.parse(clean);
       setAiSignal(parsed);
       setDetailTab('chart'); // show on chart tab so user sees it
+      pushNotif('signal', `AI Signal: ${parsed.action} ${selected.short}/USDT`, `${parsed.action} signal · ${parsed.confidence}% confidence · Entry $${parsed.entry} · TP $${parsed.tp} · SL $${parsed.sl}`, {coin:selected.short, action:parsed.action});
     } catch(err) {
       // Fallback mock signal if API not connected yet
       const isBull = change >= 0;
@@ -947,6 +1060,8 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
       txns.unshift({id:Date.now(),type:'BUY',amount:cost,note:`BUY ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(txns));
       showToast(`Bought ${qty.toFixed(6)} ${selected.short} for $${cost.toFixed(2)}`);
+      pushNotif('trade', `BUY ${selected.short}/USDT`, `Bought ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Total $${cost.toFixed(2)}`, {coin:selected.short, type:'BUY'});
+      syncTrade('BUY', selected.short, selected.symbol, qty, price);
     } else {
       const owned=w[selected.short]||0;
       if (owned<=0) { showToast(`You don't own any ${selected.short} to sell`,false); return; }
@@ -960,15 +1075,20 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
       txns.unshift({id:Date.now(),type:'SELL',amount:proceeds,note:`SELL ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(txns));
       showToast(`Sold ${qty.toFixed(6)} ${selected.short} for $${proceeds.toFixed(2)}`);
+      pushNotif('trade', `SELL ${selected.short}/USDT`, `Sold ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Received $${proceeds.toFixed(2)}`, {coin:selected.short, type:'SELL'});
+      syncTrade('SELL', selected.short, selected.symbol, qty, price);
     }
-    const pos={id:Date.now(),coin:selected.short,symbol:selected.symbol,
-      type:tradeType,entry:price,qty,status:'OPEN',
-      tp:tradeType==='BUY'?price*1.05:price*0.95,
-      sl:tradeType==='BUY'?price*0.97:price*1.03,
-      pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
-    const next=[pos,...positions];
-    setPositions(next);
-    localStorage.setItem('positions',JSON.stringify(next));
+    // Only create a position record for BUY trades
+    // SELL is a spot disposal — it's just a wallet transaction, not a tracked position
+    if (tradeType === 'BUY') {
+      const pos={id:Date.now(),coin:selected.short,symbol:selected.symbol,
+        type:'BUY',entry:price,qty,status:'OPEN',
+        tp:price*1.05, sl:price*0.97,
+        pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
+      const next=[pos,...positions];
+      setPositions(next);
+      localStorage.setItem('positions',JSON.stringify(next));
+    }
     setTradeAmt(''); setTradeQty('');
     setDetailTab('positions');
   };
@@ -1009,7 +1129,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Sora:wght@600;700&display=swap');
-        .db{min-height:100vh;background:#f8fafc;color:#0f172a;font-family:'DM Sans',sans-serif;display:flex;flex-direction:column;}
+        .db{min-height:100vh;background:#f8fafc;color:#0f172a;font-family:'DM Sans',sans-serif;}
         .fade-in{animation:fi .3s ease both;}
         @keyframes fi{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes slideUp{from{opacity:0;transform:translateY(60px)}to{opacity:1;transform:none}}
@@ -1032,14 +1152,15 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
         .coin-header{display:flex;align-items:center;gap:10;padding:14px 20px 12px;
           border-bottom:1px solid #f1f5f9;flex-shrink:0;background:white;flex-wrap:nowrap;}
         .price-block{text-align:right;flex-shrink:0;}
-        @media(max-width:480px){
+        @media(max-width:600px){
           .ai-btn{padding:7px 10px;}
-          .ai-btn-text{display:none;}
-          .coin-header{flex-wrap:wrap;padding:10px 16px 10px;}
+          .ai-btn-text{display:none!important;}
+          .coin-header{flex-wrap:wrap;padding:10px 14px 8px;gap:8px;}
           .price-block{order:10;width:100%;text-align:left;
             display:flex;align-items:center;gap:10;
-            padding:6px 0 0;border-top:1px solid #f8fafc;margin-top:4px;}
-          .price-big{font-size:18px!important;}
+            padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
+          .price-big{font-size:20px!important;}
+          .ai-btn-wrap{flex-shrink:0;}
         }
         .close-btn{padding:'5px 12px';border-radius:8px;border:'1.5px solid rgba(239,68,68,0.3)';
           background:'rgba(239,68,68,0.05)';color:'#dc2626';font-size:11px;font-weight:600;
@@ -1051,7 +1172,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
 
       <div className="db">
         {selected ? (
-          <div className="fade-in" style={{display:'flex',flexDirection:'column',flex:1,minHeight:0,background:'white'}}>
+          <div className="fade-in" style={{display:'flex',flexDirection:'column',background:'white'}}>
 
             {/* ── Header ── */}
             <div className="coin-header" style={{display:'flex',alignItems:'center',gap:10,
@@ -1075,12 +1196,14 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
               </div>
 
               {/* ── AI SIGNAL BUTTON ── */}
-              <button className="ai-btn" onClick={getAISignal} disabled={aiLoading}>
-                {aiLoading
-                  ? <><span className="spinner"/><span className="ai-btn-text"> Analyzing…</span></>
-                  : <><span style={{fontSize:12,fontWeight:800,letterSpacing:'-0.3px'}}>AI</span><span className="ai-btn-text"> Signal</span></>
-                }
-              </button>
+              <div className="ai-btn-wrap" style={{flexShrink:0}}>
+                <button className="ai-btn" onClick={getAISignal} disabled={aiLoading}>
+                  {aiLoading
+                    ? <><span className="spinner"/><span className="ai-btn-text"> Analyzing…</span></>
+                    : <><span style={{fontSize:12,fontWeight:800,letterSpacing:'-0.3px'}}>AI</span><span className="ai-btn-text"> Signal</span></>
+                  }
+                </button>
+              </div>
 
               {/* ── STAR BUTTON ── */}
               <button className="star-btn" onClick={()=>toggleWatchlist(selected.symbol)}
@@ -1094,9 +1217,9 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
               </button>
 
               {/* Price block — moves to own row on mobile */}
-              <div className="price-block" style={{textAlign:'right',flexShrink:0}}>
+              <div className="price-block" style={{textAlign:'right',flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
                 <div className="price-big" style={{fontSize:22,fontWeight:700,fontFamily:"'Sora',sans-serif",
-                  color:selUp?'#16a34a':'#dc2626',letterSpacing:'-0.5px',lineHeight:1.1}}>
+                  color:selUp?'#16a34a':'#dc2626',letterSpacing:'-0.5px',lineHeight:1}}>
                   ${selPrice?selPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4}):'—'}
                 </div>
                 <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:5,
@@ -1173,7 +1296,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
             </div>
 
             {/* Tab content */}
-            <div style={{flex:1,overflowY:'auto',background:'#f8fafc'}}>
+            <div style={{background:'#f8fafc'}}>
 
               {/* ── CHART TAB — shows AI signal here ── */}
               {detailTab==='chart'&&(
@@ -1324,7 +1447,16 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
                     <div style={{textAlign:'center',color:'#94a3b8',padding:'40px 0',fontSize:13}}>No positions yet</div>
                   ):positions.filter(p=>p.symbol===selected.symbol).map(p=>{
                     const isClosed = p.status==='CLOSED';
-                    const pnlVal   = isClosed ? p.closePnl : p.pnl;
+                    // Always use live price — never stale p.current or p.pnl
+                    const liveCur = isClosed
+                      ? (p.closePrice||p.entry)
+                      : (prices[p.symbol]||p.current||p.entry);
+                    const pnlVal = isClosed
+                      ? (p.closePnl||0)
+                      : (p.type==='BUY'?(liveCur-p.entry)*p.qty:(p.entry-liveCur)*p.qty);
+                    const pnlPct = p.entry>0
+                      ? (p.type==='BUY'?((liveCur-p.entry)/p.entry*100):((p.entry-liveCur)/p.entry*100))
+                      : 0;
                     return (
                       <div key={p.id} style={{background:'white',border:`1px solid ${isClosed?'#f1f5f9':pnlVal>=0?'rgba(34,197,94,0.15)':'rgba(239,68,68,0.15)'}`,
                         borderRadius:12,padding:16,marginBottom:10,
@@ -1348,15 +1480,22 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
                             )}
                           </div>
                           <div style={{display:'flex',alignItems:'center',gap:8}}>
-                            <span style={{fontSize:14,fontWeight:700,
-                              color:pnlVal>=0?'#16a34a':'#dc2626',fontFamily:"'Sora',sans-serif"}}>
-                              {pnlVal>=0?'+':''}${pnlVal?.toFixed(4)}
-                            </span>
+                            <div style={{textAlign:'right'}}>
+                              <div style={{fontSize:14,fontWeight:700,
+                                color:pnlVal>=0?'#16a34a':'#dc2626',fontFamily:"'Sora',sans-serif"}}>
+                                {pnlVal>=0?'+':''}${pnlVal.toFixed(4)}
+                              </div>
+                              {!isClosed&&(
+                                <div style={{fontSize:11,fontWeight:600,color:pnlVal>=0?'#16a34a':'#dc2626'}}>
+                                  {pnlPct>=0?'+':''}{pnlPct.toFixed(2)}%
+                                </div>
+                              )}
+                            </div>
                             {/* ── CLOSE POSITION BUTTON ── */}
                             {!isClosed&&(
                               <button
                                 onClick={()=>{
-                                  if(window.confirm(`Close ${p.type} position for ${p.qty} ${p.coin}? Current P&L: ${pnlVal>=0?'+':''}$${pnlVal?.toFixed(4)}`))
+                                  if(window.confirm(`Close ${p.type} position for ${p.qty} ${p.coin}? Current P&L: ${pnlVal>=0?'+':''}$${pnlVal.toFixed(4)}`))
                                     closePosition(p);
                                 }}
                                 style={{padding:'5px 10px',borderRadius:8,
@@ -1381,7 +1520,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
                             {l:'SL',      v:`$${p.sl.toFixed(2)}`},
                             {l:'Qty',     v:p.qty},
                             {l:isClosed?'Closed @':'Current',
-                              v:`$${isClosed?p.closePrice?.toFixed(4):(p.current||p.entry).toFixed(4)}`},
+                              v:`$${liveCur.toFixed(4)}`},
                             {l:'Time',    v:p.time.split(',')[0]},
                           ].map(x=>(
                             <div key={x.l}>

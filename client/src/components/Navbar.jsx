@@ -23,6 +23,23 @@ const getWallet = () => {
   catch { return { USDT: 10000 }; }
 };
 
+const getNotifs = () => {
+  try { return JSON.parse(localStorage.getItem("notifications") || "[]"); }
+  catch { return []; }
+};
+
+const fmtTime = (iso) => {
+  try {
+    const diff = (Date.now() - new Date(iso)) / 1000;
+    if (diff < 60)    return "just now";
+    if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch { return ""; }
+};
+
+const TYPE_COLOR = { trade:"#6366f1", price:"#f59e0b", signal:"#22c55e", system:"#94a3b8" };
+
 const Navbar = ({ notifCount = 0 }) => {
   const location  = useLocation();
   const navigate  = useNavigate();
@@ -30,13 +47,29 @@ const Navbar = ({ notifCount = 0 }) => {
   const [walletOpen,  setWalletOpen]  = useState(false);
   const [notifOpen,   setNotifOpen]   = useState(false);
   const [wallet,      setWallet]      = useState(getWallet);
+  const [notifs, setNotifs] = useState(getNotifs);
+  const [unread, setUnread] = useState(() => getNotifs().filter(n => !n.read).length);
   const walletRef = useRef(null);
   const notifRef  = useRef(null);
 
   useEffect(() => {
-    const sync = () => setWallet(getWallet());
-    window.addEventListener("walletUpdate", sync);
-    return () => window.removeEventListener("walletUpdate", sync);
+    const sync = () => {
+      setWallet(getWallet());
+      const n = getNotifs();
+      setNotifs(n);
+      setUnread(n.filter(x => !x.read).length);
+    };
+    // Also sync when notifications page saves new notifs
+    window.addEventListener("walletUpdate",  sync);
+    window.addEventListener("storage",       sync);
+    window.addEventListener("notifUpdate",   sync);
+    window.addEventListener("notifsUpdated", sync); // ← correct event name
+    return () => {
+      window.removeEventListener("walletUpdate",  sync);
+      window.removeEventListener("storage",       sync);
+      window.removeEventListener("notifUpdate",   sync);
+      window.removeEventListener("notifsUpdated", sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -261,8 +294,15 @@ const Navbar = ({ notifCount = 0 }) => {
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
                 <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
               </svg>
-              {notifCount>0 && (
-                <span style={{position:"absolute",top:3,right:3,width:8,height:8,background:"#ef4444",borderRadius:"50%",border:"2px solid white"}}/>
+              {unread>0 && (
+                <span style={{
+                  position:"absolute", top:-3, right:-3,
+                  minWidth:16, height:16, padding:"0 4px",
+                  background:"#ef4444", borderRadius:8,
+                  fontSize:9, fontWeight:700, color:"white",
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  border:"2px solid white", lineHeight:1,
+                }}>{unread > 9 ? "9+" : unread}</span>
               )}
             </button>
             {notifOpen && (
@@ -271,24 +311,36 @@ const Navbar = ({ notifCount = 0 }) => {
                   <span>Notifications</span>
                   <button className="nb-drop-close" onClick={()=>setNotifOpen(false)}>✕</button>
                 </div>
-                <div style={{padding:"6px 14px 2px",fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:".5px"}}>Last 24 hours</div>
-                {[
-                  {dot:"#22c55e",text:"BTC surged +3.2% in last 5 min",time:"2 min ago"},
-                  {dot:"#6366f1",text:"BUY BTC trade placed at $65,000",time:"18 min ago"},
-                  {dot:"#ef4444",text:"ETH dropped -2.1% — high volatility",time:"1 hr ago"},
-                  {dot:"#94a3b8",text:"SOL TP hit — profit locked in",time:"Yesterday"},
-                ].map((n,i)=>(
-                  <div key={i} className="nb-notif-item">
-                    <span className="nb-ndot" style={{background:n.dot}}/>
-                    <div>
-                      <div style={{fontSize:12.5,color:"#334155",lineHeight:1.4}}>{n.text}</div>
-                      <div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{n.time}</div>
-                    </div>
+                {notifs.length === 0 ? (
+                  <div style={{padding:"24px 14px",textAlign:"center",color:"#94a3b8",fontSize:12}}>
+                    No notifications yet
                   </div>
-                ))}
-                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
+                ) : (
+                  <>
+                    {notifs.slice(0,5).map((n)=>(
+                      <div key={n.id} className="nb-notif-item"
+                        style={{background:n.read?"white":"rgba(99,102,241,0.03)",borderLeft:`2px solid ${n.read?"transparent":"#6366f1"}`}}
+                        onClick={()=>{
+                          const updated=getNotifs().map(x=>x.id===n.id?{...x,read:true}:x);
+                          localStorage.setItem("notifications",JSON.stringify(updated));
+                          setNotifs(updated); setUnread(updated.filter(x=>!x.read).length);
+                          setNotifOpen(false); navigate("/notifications");
+                        }}>
+                        <span className="nb-ndot" style={{background:TYPE_COLOR[n.type]||"#94a3b8"}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:12.5,color:"#334155",lineHeight:1.4,fontWeight:n.read?400:600,
+                            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.title}</div>
+                          <div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{fmtTime(n.time)}</div>
+                        </div>
+                        {!n.read&&<div style={{width:6,height:6,borderRadius:"50%",background:"#6366f1",flexShrink:0,marginTop:4}}/>}
+                      </div>
+                    ))}
+                  </>
+                )}
+                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  {unread>0&&<span style={{fontSize:11,color:"#6366f1",fontWeight:600}}>{unread} unread</span>}
                   <Link to="/notifications" onClick={()=>setNotifOpen(false)}
-                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none"}}>
+                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none",marginLeft:"auto"}}>
                     View all →
                   </Link>
                 </div>
@@ -304,6 +356,14 @@ const Navbar = ({ notifCount = 0 }) => {
               className={`nb-link${location.pathname === path ? " active" : ""}`}>
               <span className="nb-link-icon">{icon}</span>
               {label}
+              {path === "/notifications" && unread > 0 && (
+                <span style={{
+                  marginLeft:"auto", minWidth:18, height:18, padding:"0 5px",
+                  background:"#ef4444", borderRadius:9, fontSize:10, fontWeight:700,
+                  color:"white", display:"flex", alignItems:"center", justifyContent:"center",
+                  lineHeight:1,
+                }}>{unread > 9 ? "9+" : unread}</span>
+              )}
             </Link>
           ))}
         </div>
@@ -360,6 +420,38 @@ const Navbar = ({ notifCount = 0 }) => {
           </div>
 
           {/* Notifications button moved to header beside brand */}
+
+          {/* Logout */}
+          <button
+            onClick={()=>{
+              localStorage.removeItem('user');
+              localStorage.removeItem('wallet');
+              localStorage.removeItem('positions');
+              localStorage.removeItem('wallet_txns');
+              localStorage.removeItem('watchlist');
+              localStorage.removeItem('notifications');
+              localStorage.removeItem('notifs_seeded');
+              navigate('/');
+            }}
+            style={{
+              width:'100%',display:'flex',alignItems:'center',gap:10,
+              padding:'10px 12px',borderRadius:10,border:'none',
+              background:'transparent',cursor:'pointer',
+              fontFamily:"'DM Sans',sans-serif",fontSize:'13.5px',
+              fontWeight:500,color:'#ef4444',marginTop:4,
+              transition:'background .15s',
+            }}
+            onMouseEnter={e=>e.currentTarget.style.background='rgba(239,68,68,0.07)'}
+            onMouseLeave={e=>e.currentTarget.style.background='transparent'}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Logout
+          </button>
         </div>
       </aside>
 
@@ -384,7 +476,7 @@ const Navbar = ({ notifCount = 0 }) => {
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
                 <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
               </svg>
-              {notifCount>0&&(
+              {unread>0&&(
                 <span style={{position:"absolute",top:4,right:4,width:8,height:8,
                   background:"#ef4444",borderRadius:"50%",border:"2px solid white"}}/>
               )}
@@ -398,24 +490,30 @@ const Navbar = ({ notifCount = 0 }) => {
                   <span>Notifications</span>
                   <button className="nb-drop-close" onClick={()=>setNotifOpen(false)}>✕</button>
                 </div>
-                <div style={{padding:"6px 14px 2px",fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:".5px"}}>Last 24 hours</div>
-                {[
-                  {dot:"#22c55e",text:"BTC surged +3.2% in last 5 min",time:"2 min ago"},
-                  {dot:"#6366f1",text:"BUY BTC trade placed at $65,000",time:"18 min ago"},
-                  {dot:"#ef4444",text:"ETH dropped -2.1% — high volatility",time:"1 hr ago"},
-                  {dot:"#94a3b8",text:"SOL TP hit — profit locked in",time:"Yesterday"},
-                ].map((n,i)=>(
-                  <div key={i} className="nb-notif-item">
-                    <span className="nb-ndot" style={{background:n.dot}}/>
-                    <div>
-                      <div style={{fontSize:12.5,color:"#334155",lineHeight:1.4}}>{n.text}</div>
-                      <div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{n.time}</div>
+                {notifs.length === 0 ? (
+                  <div style={{padding:"24px 14px",textAlign:"center",color:"#94a3b8",fontSize:12}}>No notifications yet</div>
+                ) : notifs.slice(0,5).map((n)=>(
+                  <div key={n.id} className="nb-notif-item"
+                    style={{background:n.read?"white":"rgba(99,102,241,0.03)",borderLeft:`2px solid ${n.read?"transparent":"#6366f1"}`}}
+                    onClick={()=>{
+                      const updated=getNotifs().map(x=>x.id===n.id?{...x,read:true}:x);
+                      localStorage.setItem("notifications",JSON.stringify(updated));
+                      setNotifs(updated); setUnread(updated.filter(x=>!x.read).length);
+                      setNotifOpen(false); navigate("/notifications");
+                    }}>
+                    <span className="nb-ndot" style={{background:TYPE_COLOR[n.type]||"#94a3b8"}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12.5,color:"#334155",lineHeight:1.4,fontWeight:n.read?400:600,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.title}</div>
+                      <div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{fmtTime(n.time)}</div>
                     </div>
+                    {!n.read&&<div style={{width:6,height:6,borderRadius:"50%",background:"#6366f1",flexShrink:0,marginTop:4}}/>}
                   </div>
                 ))}
-                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",textAlign:"center"}}>
+                <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  {unread>0&&<span style={{fontSize:11,color:"#6366f1",fontWeight:600}}>{unread} unread</span>}
                   <Link to="/notifications" onClick={()=>setNotifOpen(false)}
-                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none"}}>
+                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none",marginLeft:"auto"}}>
                     View all →
                   </Link>
                 </div>
@@ -443,6 +541,13 @@ const Navbar = ({ notifCount = 0 }) => {
             className={`nb-mob-link${location.pathname===path?" active":""}`}>
             <span className="nb-mob-link-icon">{icon}</span>
             {label}
+            {path === "/notifications" && unread > 0 && (
+              <span style={{
+                marginLeft:"auto", minWidth:18, height:18, padding:"0 5px",
+                background:"#ef4444", borderRadius:9, fontSize:10, fontWeight:700,
+                color:"white", display:"flex", alignItems:"center", justifyContent:"center",
+              }}>{unread > 9 ? "9+" : unread}</span>
+            )}
           </Link>
         ))}
         <div style={{marginTop:"auto",padding:"12px",background:"#f8fafc",borderRadius:12,border:"1px solid #f1f5f9",cursor:"pointer"}}
@@ -454,6 +559,36 @@ const Navbar = ({ notifCount = 0 }) => {
           </div>
           <div style={{fontSize:11,color:"#6366f1",marginTop:4,fontWeight:500}}>Tap to manage →</div>
         </div>
+
+        {/* Logout — mobile */}
+        <button
+          onClick={()=>{
+            localStorage.removeItem('user');
+            localStorage.removeItem('wallet');
+            localStorage.removeItem('positions');
+            localStorage.removeItem('wallet_txns');
+            localStorage.removeItem('watchlist');
+            localStorage.removeItem('notifications');
+            localStorage.removeItem('notifs_seeded');
+            setSidebarOpen(false);
+            navigate('/');
+          }}
+          style={{
+            display:'flex',alignItems:'center',gap:10,width:'100%',
+            padding:'12px',borderRadius:10,border:'1px solid rgba(239,68,68,0.2)',
+            background:'rgba(239,68,68,0.05)',cursor:'pointer',marginTop:8,
+            fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:600,
+            color:'#ef4444',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          Logout
+        </button>
       </div>
 
       <div className="nb-mob-topoffset" style={{height:62}}/>
