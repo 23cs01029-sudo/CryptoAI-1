@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 const Login = () => {
   const [isSignup, setIsSignup] = useState(false);
   const [step, setStep]         = useState("form");
@@ -21,6 +25,12 @@ const Login = () => {
   const [loading, setLoading]           = useState(false);
 
   const navigate = useNavigate();
+
+  /* ── Redirect if already logged in ── */
+  useEffect(() => {
+    const user = localStorage.getItem('user');
+    if (user) navigate('/dashboard');
+  }, [navigate]);
 
   /* ── EmailJS config ── replace with your values from emailjs.com */
   const EMAILJS_SERVICE_ID  = "service_7eo8n3g";
@@ -61,8 +71,6 @@ const Login = () => {
     if (getAge(dob) < 18)   { setErrMsg("You must be 18 or older to register."); return false; }
     setErrMsg(""); return true;
   };
-
-  /* ── Check backend (optional — works without server too) ── */
 
   /* ── Check backend ── */
   const checkBackend = async (emailVal, phoneVal) => {
@@ -164,7 +172,7 @@ const Login = () => {
 
     // Save to MongoDB if backend is running (fire and forget)
     try {
-      await fetch('/api/auth/save-user', {
+      await fetch(`${API_BASE}/api/auth/save-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(user),
@@ -359,11 +367,9 @@ const Login = () => {
                 {otp.map((digit, i) => (
                   <input key={i} id={`otp-${i}`} className="otp-digit"
                     maxLength={1} value={digit}
-                    inputMode="numeric" pattern="[0-9]*"
-                    autoComplete="one-time-code"
+                    inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code"
                     onChange={e => {
-                      const raw = e.target.value;
-                      const val = raw.replace(/[^0-9]/g, '').slice(-1);
+                      const val = e.target.value.replace(/[^0-9]/g, '').slice(-1);
                       if (!val) return;
                       const next = [...otp]; next[i] = val; setOtp(next);
                       if (i < 5) document.getElementById(`otp-${i+1}`)?.focus();
