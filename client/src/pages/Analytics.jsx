@@ -317,7 +317,17 @@ const Analytics = () => {
         .ind-bar{height:8px;border-radius:4px;background:#f1f5f9;overflow:hidden;margin-top:4px;}
         .ind-fill{height:100%;border-radius:4px;transition:width .6s ease;}
         @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-        @media(max-width:640px){.an-row,.an-row-3{grid-template-columns:1fr;}.an-grid{grid-template-columns:1fr 1fr;}}
+        @media(max-width:640px){
+          .an-row,.an-row-3{grid-template-columns:1fr;}
+          .an-grid{grid-template-columns:1fr 1fr;}
+          .an-tab{padding:7px 10px;font-size:12px;}
+        }
+        @media(max-width:400px){
+          .an-grid{grid-template-columns:1fr 1fr;}
+          .an-tab{padding:6px 8px;font-size:11.5px;}
+          .an-tabs{width:100%;overflow-x:auto;scrollbar-width:none;}
+          .an-tabs::-webkit-scrollbar{display:none;}
+        }
       `}</style>
 
       <div className="an-root">
@@ -336,7 +346,7 @@ const Analytics = () => {
             </div>
           </div>
           <div style={{ marginTop: 16 }}>
-            <div className="an-tabs">
+            <div className="an-tabs" style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
               {TABS.map(t => (
                 <button key={t} className={`an-tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
                   {t.charAt(0).toUpperCase() + t.slice(1)}

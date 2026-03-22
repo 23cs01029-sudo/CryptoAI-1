@@ -1193,6 +1193,12 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
             padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
           .price-big{font-size:20px!important;}
           .ai-btn-wrap{flex-shrink:0;}
+          .db-list-header{flex-direction:column;align-items:flex-start;gap:8px;}
+          .db-bubble-row{align-self:flex-end;}
+        }
+        @media(max-width:400px){
+          .price-big{font-size:18px!important;}
+          .coin-header{padding:8px 10px 6px;}
         }
         .close-btn{padding:'5px 12px';border-radius:8px;border:'1.5px solid rgba(239,68,68,0.3)';
           background:'rgba(239,68,68,0.05)';color:'#dc2626';font-size:11px;font-weight:600;

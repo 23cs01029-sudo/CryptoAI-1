@@ -977,6 +977,14 @@ const Watchlist = () => {
             padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
           .wl-price-big{font-size:20px!important;}
           .wl-ai-btn-wrap{flex-shrink:0;}
+          .wl-card-grid{grid-template-columns:1fr!important;}
+          .wl-top-bar{flex-wrap:wrap;gap:8px;}
+          .wl-top-bar-right{flex-shrink:0;}
+        }
+        @media(max-width:400px){
+          .wl-price-big{font-size:18px!important;}
+          .wl-coin-header{padding:8px 10px 6px;}
+          .wl-card-grid{gap:8px!important;}
         }
       `}</style>
 

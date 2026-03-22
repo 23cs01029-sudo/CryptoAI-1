@@ -892,8 +892,15 @@ const Trades = () => {
             .tr-price-block{order:10;width:100%;text-align:left;display:flex;align-items:center;gap:10px;padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
             .tr-price-big{font-size:20px!important;}
             .ai-btn-wrap{flex-shrink:0;}
+            .tr-tabs{overflow-x:auto;scrollbar-width:none;}
+            .tr-tabs::-webkit-scrollbar{display:none;}
+            .tr-tab{white-space:nowrap;padding:7px 12px;font-size:12px;}
+            .tr-summary-grid{grid-template-columns:1fr 1fr!important;}
+            .tr-open-card{padding:14px!important;}
           }
+          @media(max-width:400px){
             .tr-price-big{font-size:18px!important;}
+            .tr-summary-grid{grid-template-columns:1fr!important;}
           }
         `}</style>
         <div className="tr-detail fade-in">

@@ -132,6 +132,7 @@ const Wallet = () => {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Sora:wght@600;700&display=swap');
         .wl { font-family:'DM Sans',sans-serif; color:#0f172a; max-width:600px; margin:0 auto; padding:24px 20px; }
+        @media(max-width:480px){ .wl { padding:16px 14px; } }
         .wl-tab-bar { display:flex; gap:4px; background:#f1f5f9; padding:4px; border-radius:12px; margin-bottom:24px; }
         .wl-tab {
           flex:1; padding:9px 0; border:none; border-radius:9px; cursor:pointer;
@@ -140,21 +141,20 @@ const Wallet = () => {
         }
         .wl-tab.active { background:white; color:#0f172a; font-weight:600;
           box-shadow:0 1px 4px rgba(0,0,0,0.08); }
-
         .wl-card {
           background:white; border:1px solid #f1f5f9; border-radius:16px;
           padding:20px; margin-bottom:14px;
           box-shadow:0 1px 4px rgba(0,0,0,0.04);
         }
-
+        @media(max-width:480px){ .wl-card { padding:16px 14px; } }
         .quick-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px; }
+        @media(max-width:360px){ .quick-grid { grid-template-columns:repeat(2,1fr); } }
         .quick-btn {
           padding:10px 0; border:1.5px solid #e2e8f0; border-radius:10px;
           background:white; color:#0f172a; font-size:13px; font-weight:600;
           cursor:pointer; font-family:'DM Sans',sans-serif; transition:.15s;
         }
         .quick-btn:hover { border-color:#6366f1; color:#6366f1; background:#f0f4ff; }
-
         .add-btn {
           width:100%; padding:14px; border:none; border-radius:12px;
           background:linear-gradient(135deg,#6366f1,#818cf8); color:white;
@@ -165,22 +165,23 @@ const Wallet = () => {
         }
         .add-btn:hover { opacity:.92; transform:translateY(-1px); }
         .add-btn:active { transform:translateY(0); }
-
         .reset-btn {
           width:100%; padding:11px; border:1.5px solid #fee2e2; border-radius:10px;
           background:transparent; color:#dc2626; font-size:13px; font-weight:500;
           cursor:pointer; font-family:'DM Sans',sans-serif; transition:.15s;
         }
         .reset-btn:hover { background:#fef2f2; }
-
         .holding-row {
           display:flex; align-items:center; justify-content:space-between;
-          padding:12px 0; border-bottom:1px solid #f8fafc;
+          padding:12px 0; border-bottom:1px solid #f8fafc; gap:8px;
         }
         .holding-row:last-child { border-bottom:none; }
-
+        .holding-left { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
+        .holding-name { font-size:14px; font-weight:600; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .holding-sub  { font-size:11px; color:#94a3b8; }
+        .holding-amt  { font-size:14px; font-weight:700; color:#0f172a; font-family:'Sora',sans-serif; text-align:right; flex-shrink:0; }
         .txn-row {
-          display:flex; align-items:center; gap:12px;
+          display:flex; align-items:center; gap:10px;
           padding:12px 0; border-bottom:1px solid #f8fafc;
         }
         .txn-row:last-child { border-bottom:none; }
@@ -188,13 +189,16 @@ const Wallet = () => {
           width:36px; height:36px; border-radius:10px; flex-shrink:0;
           display:flex; align-items:center; justify-content:center;
         }
-
+        .txn-note { font-size:12.5px; font-weight:600; color:#0f172a; word-break:break-word; }
+        .txn-time { font-size:11px; color:#94a3b8; margin-top:1px; }
+        .txn-amt  { font-size:13px; font-weight:700; font-family:'Sora',sans-serif; flex-shrink:0; }
         .toast {
           position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
           padding:12px 20px; border-radius:12px; font-size:13px; font-weight:600;
           font-family:'DM Sans',sans-serif; z-index:500; white-space:nowrap;
           animation:toastIn .25s ease;
           box-shadow:0 4px 20px rgba(0,0,0,0.15);
+          max-width:calc(100vw - 32px); white-space:normal; text-align:center;
         }
         @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
       `}</style>

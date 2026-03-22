@@ -226,6 +226,8 @@ const Login = () => {
             0 28px 56px rgba(100,140,210,.11),inset 0 1px 0 rgba(255,255,255,.96);
           animation:rise .45s cubic-bezier(.22,1,.36,1) both;}
         @media(max-width:440px){.card{width:92vw;padding:32px 20px 28px;}}
+        @media(max-width:400px){.two-col{grid-template-columns:1fr;}}
+        @media(max-width:400px){.two-col{grid-template-columns:1fr;}}
         @keyframes rise{from{opacity:0;transform:translateY(20px) scale(.98);}to{opacity:1;transform:none;}}
         .brand{text-align:center;margin-bottom:18px;font-family:'Sora',sans-serif;font-size:26px;
           font-weight:700;letter-spacing:-.5px;
