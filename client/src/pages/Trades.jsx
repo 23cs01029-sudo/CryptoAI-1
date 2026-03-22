@@ -542,6 +542,13 @@ const Trades = () => {
     return()=>{ window.removeEventListener('walletUpdate',sync); window.removeEventListener('focus',sync); };
   },[]);
 
+  // Keep watchlist in sync
+  useEffect(()=>{
+    const sync=()=>{ try { setWatchlist(JSON.parse(localStorage.getItem('watchlist')||'[]')); } catch{} };
+    window.addEventListener('storage', sync);
+    return()=>window.removeEventListener('storage',sync);
+  },[]);
+
   /* Load ALL data from MongoDB on mount — cross-device sync */
   useEffect(()=>{
     const userEmail = getUserEmail(); if (!userEmail) return;

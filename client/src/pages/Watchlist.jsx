@@ -528,6 +528,14 @@ const Watchlist = () => {
     return()=>window.removeEventListener('walletUpdate',sync);
   },[]);
 
+  // Keep watchlist in sync when updated from other pages/tabs
+  useEffect(()=>{
+    const sync=()=>{ try { setWatchlist(JSON.parse(localStorage.getItem('watchlist')||'[]')); } catch{} };
+    window.addEventListener('storage', sync);
+    window.addEventListener('walletUpdate', sync);
+    return()=>{ window.removeEventListener('storage',sync); window.removeEventListener('walletUpdate',sync); };
+  },[]);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchQ,     setSearchQ]      = useState('');
   const [showSearch,  setShowSearch]   = useState(false);
