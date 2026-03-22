@@ -15,6 +15,19 @@ const getUserEmail = () => {
   catch { return null; }
 };
 
+/* ── EmailJS price alert ── */
+const EMAILJS_SERVICE_ID  = 'service_7eo8n3g';
+const EMAILJS_TEMPLATE_ID = 'template_xpa7txr';
+const EMAILJS_PUBLIC_KEY  = 'RJjsxL_MNFrrHk61S';
+const sendPriceAlertEmail = (userEmail, title, body) => {
+  if (!window.emailjs || !userEmail) return;
+  window.emailjs.send(
+    EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
+    { to_email: userEmail, title, body, type: 'price', app_name: 'CryptoAI' },
+    EMAILJS_PUBLIC_KEY
+  ).catch(() => {});
+};
+
 /* Save to localStorage + fire UI event */
 const saveNotifsLocal = (n) => {
   localStorage.setItem('notifications', JSON.stringify(n));
@@ -263,14 +276,17 @@ const Notifications = () => {
             if (watchlisted.includes(sym) && old !== undefined && Math.abs(chg - old) >= 2) {
               const coin = ALL_COINS.find(c => c.symbol === sym)?.short;
               const dir  = chg > old ? '🚀 surged' : '📉 dropped';
-              const n = makeNotif('price', `${coin} price alert`,
-                `${coin}/USDT ${dir} ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}% · Now $${price.toFixed(4)}`,
-                { coin, sym, change: chg });
+              const alertTitle = `${coin} price alert`;
+              const alertBody  = `${coin}/USDT ${dir} ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}% · Now $${price.toFixed(4)}`;
+              const n = makeNotif('price', alertTitle, alertBody, { coin, sym, change: chg });
               setNotifs(cur => {
                 const next = [n, ...cur].slice(0, 100);
                 saveAndSync(next);   // ← save + sync to MongoDB
                 return next;
               });
+              // Send email alert for price move
+              const ue = getUserEmail();
+              if (ue) sendPriceAlertEmail(ue, alertTitle, alertBody);
             }
             return { ...prev, [sym]: chg };
           });
