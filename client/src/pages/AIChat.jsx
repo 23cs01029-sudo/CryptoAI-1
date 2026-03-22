@@ -32,13 +32,41 @@ const ALL_COINS = [
   {symbol:'DOTUSDT',short:'DOT'},{symbol:'MATICUSDT',short:'MATIC'},
 ];
 
-const SUGGESTED = [
-  { icon:'📊', text:'Analyze my portfolio and suggest improvements' },
-  { icon:'📈', text:'Give me a BTC trading signal with entry, TP and SL' },
-  { icon:'🔮', text:'Which crypto has the best potential right now?' },
-  { icon:'💡', text:'Explain DeFi vs CeFi with examples' },
-  { icon:'⚠️', text:'What are the biggest risks in crypto trading?' },
-  { icon:'🤖', text:'How does the 4-agent AI analysis system work?' },
+const COINS_LIST = [
+  'BTC','ETH','BNB','SOL','XRP','DOGE','ADA','AVAX','DOT','MATIC'
+];
+
+const PROMPT_CATEGORIES = [
+  {
+    label: '🪙 Coin Analysis',
+    color: '#6366f1',
+    prompts: [
+      { icon:'📈', text:'Give me a BTC trading signal with entry, TP and SL' },
+      { icon:'🔮', text:'Analyze ETH price action and suggest a trade' },
+      { icon:'⚡', text:'Which coin has the best momentum right now?' },
+      { icon:'📊', text:'Compare BTC vs ETH risk/reward this week' },
+    ]
+  },
+  {
+    label: '💼 My Portfolio',
+    color: '#22C55E',
+    prompts: [
+      { icon:'💼', text:'Analyze my portfolio and suggest improvements' },
+      { icon:'📉', text:'Which of my positions are at risk?' },
+      { icon:'💰', text:'How is my current P&L looking?' },
+      { icon:'🎯', text:'What should I rebalance in my portfolio?' },
+    ]
+  },
+  {
+    label: '🧠 Strategy & Learning',
+    color: '#F59E0B',
+    prompts: [
+      { icon:'🤖', text:'How does the 4-agent AI analysis system work?' },
+      { icon:'📚', text:'Explain RSI and MACD indicators simply' },
+      { icon:'⚠️', text:'What are the biggest risks in crypto trading?' },
+      { icon:'💡', text:'What is a good risk management strategy?' },
+    ]
+  },
 ];
 
 const AGENTS = [
@@ -248,9 +276,9 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
 
     const history = prevMsgs.filter(m=>!m.typing).map(m=>({role:m.role,content:m.content}));
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:buildSys(),messages:[...history,{role:'user',content}]})});
+      const res = await fetch(`${API_BASE}/api/chat/message`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:buildSys(),messages:[...history,{role:'user',content}]})});
       const data = await res.json();
-      const reply = data.content?.[0]?.text||'Sorry, I could not process that.';
+      const reply = data.reply || data.content?.[0]?.text || 'Sorry, I could not process that.';
       const aiMsg = { id:Date.now()+1, role:'assistant', content:reply, time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) };
       setSessions(prev => saveAndSync(prev, sid, aiMsg));
     } catch {
@@ -298,8 +326,7 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         .sg:hover{border-color:#6366f1;color:#6366f1;background:#f0f4ff;}
         .ic-btn{display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;transition:all .15s;flex-shrink:0;}
         .ic-btn:hover{background:rgba(99,102,241,0.08)!important;}
-        .hist-panel{width:0;flex-shrink:0;overflow:hidden;transition:width .25s cubic-bezier(.22,1,.36,1);background:white;border-left:1px solid #f1f5f9;}
-        .hist-panel.open{width:280px;}
+        /* hist-panel styles now in responsive section above */
         .sess-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .12s;margin-bottom:3px;}
         .sess-row:hover{background:#f8fafc;}
         .sess-row.active{background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.15);}
@@ -308,6 +335,18 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+        .aic-prices{display:flex;gap:14px;flex-shrink:0;}
+        /* hist-panel styles now in responsive section above */
+        @media(max-width:640px){
+          .aic-prices{display:none!important;}
+          .aic-wrap{padding:0 12px;}
+          .aic{height:100dvh;}
+          .hist-panel.open{position:fixed;top:0;right:0;bottom:0;width:100vw;z-index:200;border-left:none;box-shadow:-4px 0 24px rgba(0,0,0,0.12);}
+          .sg{padding:8px 12px;font-size:12px;}
+        }
+        @media(max-width:400px){
+          .aic-wrap{padding:0 8px;}
+        }
       `}</style>
 
       <div className="aic">
@@ -343,7 +382,7 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
             </div>
           </div>
 
-          <div style={{display:'flex',gap:14,flexShrink:0}}>
+          <div className="aic-prices">
             {['BTCUSDT','ETHUSDT','SOLUSDT'].filter(s=>prices[s]).map(sym=>{
               const short=ALL_COINS.find(c=>c.symbol===sym)?.short;
               const p=prices[sym];
@@ -390,7 +429,30 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
                     <div style={{fontSize:22,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif",marginBottom:6}}>Hello, Trader 👋</div>
                     <div style={{fontSize:14,color:'#64748b',marginBottom:28,maxWidth:360,lineHeight:1.6}}>I'm your AI trading assistant with live access to your portfolio. Ask me anything about crypto, get trading signals, or analyze your holdings.</div>
                     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(210px,1fr))',gap:10,width:'100%'}}>
-                      {SUGGESTED.map((s,i)=><button key={i} className="sg" onClick={()=>send(s.text)}><span style={{marginRight:8}}>{s.icon}</span>{s.text}</button>)}
+                      {}
+                  <div style={{marginBottom:16}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',letterSpacing:'.6px',textTransform:'uppercase',marginBottom:8}}>🪙 Choose a coin to analyze</div>
+                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                      {COINS_LIST.map(coin=>(
+                        <button key={coin} onClick={()=>send(`Give me a trade signal for ${coin}/USDT with entry, take profit and stop loss`)} style={{padding:'5px 12px',borderRadius:8,border:'1.5px solid #334155',background:'#1E293B',color:'#e2e8f0',fontSize:12,fontWeight:600,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='#6366f1';e.currentTarget.style.color='#6366f1';}} onMouseLeave={e=>{e.currentTarget.style.borderColor='#334155';e.currentTarget.style.color='#e2e8f0';}}>{coin}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Category prompts */}
+                  {PROMPT_CATEGORIES.map((cat,ci)=>(
+                    <div key={ci} style={{marginBottom:14}}>
+                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',letterSpacing:'.6px',textTransform:'uppercase',marginBottom:7}}>{cat.label}</div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:7}}>
+                        {cat.prompts.map((p,pi)=>(
+                          <button key={pi} className="sg" onClick={()=>send(p.text)} onMouseEnter={e=>{e.currentTarget.style.background=cat.color+'18';e.currentTarget.style.borderColor=cat.color;}} onMouseLeave={e=>{e.currentTarget.style.background='#1E293B';e.currentTarget.style.borderColor=cat.color+'44';}}
+                            style={{borderColor:cat.color+'44'}}>
+                            <span style={{marginRight:6}}>{p.icon}</span>{p.text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                     </div>
                   </div>
                 ):(active.messages.map(msg=><Bubble key={msg.id} msg={msg}/>))}

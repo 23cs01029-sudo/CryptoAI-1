@@ -1,5 +1,8 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
 
 /* ─── Wallet helpers ─────────────────────────────────────────── */
 const getWallet = () => {
