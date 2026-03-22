@@ -4,7 +4,6 @@ import { useLocation } from 'react-router-dom';
 const API_BASE = process.env.NODE_ENV === 'production'
   ? 'https://cryptoai-server.onrender.com'
   : '';
-
 /* ─── Wallet helpers ─────────────────────────────────────────── */
 const getWallet = () => {
   try { return JSON.parse(localStorage.getItem('wallet') || '{"USDT":10000}'); }
@@ -29,7 +28,7 @@ const getUserEmail = () => {
 
 const syncWallet = (wallet) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch(`${API_BASE}/api/wallet`, {
+  fetch('/api/wallet', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, balances: wallet }),
   }).catch(()=>{});
@@ -37,17 +36,23 @@ const syncWallet = (wallet) => {
 
 const syncPositions = (positions) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch(`${API_BASE}/api/positions`, {
+  fetch('/api/positions', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, positions }),
   }).catch(()=>{});
 };
 
-
+const syncTxns = (txns) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns }),
+  }).catch(()=>{});
+};
 
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch(`${API_BASE}/api/trades`, {
+  fetch('/api/trades', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, type, coin, symbol, qty, price, pnl }),
   }).catch(()=>{});
@@ -55,7 +60,7 @@ const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
 
 const syncWatchlist = (watchlist) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch(`${API_BASE}/api/watchlist`, {
+  fetch('/api/watchlist', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, symbols: watchlist }),
   }).catch(()=>{});
@@ -69,7 +74,14 @@ const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
 const pushNotif = (type, title, body, meta={}) => {
   try {
     const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
-    const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
+    // Deduplicate — skip if same title+body was added in last 10 seconds
+    const now = Date.now();
+    const isDuplicate = existing.some(x =>
+      x.title === title && x.body === body &&
+      now - new Date(x.time).getTime() < 10000
+    );
+    if (isDuplicate) return;
+    const n = { id:now+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
     localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
     window.dispatchEvent(new Event('notifsUpdated'));
     if (type === 'trade' || type === 'signal') {
@@ -795,10 +807,10 @@ const Dashboard = () => {
   useEffect(()=>{
     const userEmail = getUserEmail(); if (!userEmail) return;
     Promise.all([
-      fetch(`${API_BASE}/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`${API_BASE}/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`${API_BASE}/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`${API_BASE}/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
     ]).then(([wRes, pRes, tRes, wlRes])=>{
       if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); setWallet(wRes.balances); window.dispatchEvent(new Event('walletUpdate')); }
       if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); setPositions(pRes.positions); }
@@ -1034,7 +1046,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
 }`;
 
     try {
-      const res = await fetch(`${API_BASE}/api/ai-signal`, {
+      const res = await fetch('/api/ai-signal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1193,12 +1205,6 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
             padding:8px 0 0;border-top:1px solid #f8fafc;margin-top:2px;}
           .price-big{font-size:20px!important;}
           .ai-btn-wrap{flex-shrink:0;}
-          .db-list-header{flex-direction:column;align-items:flex-start;gap:8px;}
-          .db-bubble-row{align-self:flex-end;}
-        }
-        @media(max-width:400px){
-          .price-big{font-size:18px!important;}
-          .coin-header{padding:8px 10px 6px;}
         }
         .close-btn{padding:'5px 12px';border-radius:8px;border:'1.5px solid rgba(239,68,68,0.3)';
           background:'rgba(239,68,68,0.05)';color:'#dc2626';font-size:11px;font-weight:600;

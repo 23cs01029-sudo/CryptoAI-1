@@ -71,7 +71,14 @@ const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
 const pushNotif = (type, title, body, meta={}) => {
   try {
     const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
-    const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
+    // Deduplicate — skip if same title+body added in last 10 seconds
+    const now = Date.now();
+    const isDuplicate = existing.some(x =>
+      x.title === title && x.body === body &&
+      now - new Date(x.time).getTime() < 10000
+    );
+    if (isDuplicate) return;
+    const n = { id:now+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
     localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
     window.dispatchEvent(new Event('notifsUpdated'));
     if (type === 'trade' || type === 'signal') {
