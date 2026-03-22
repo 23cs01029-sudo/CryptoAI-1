@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import API_BASE from '../api';
 import { useNavigate } from "react-router-dom";
 
 const Login = () => {
@@ -22,12 +21,6 @@ const Login = () => {
   const [loading, setLoading]           = useState(false);
 
   const navigate = useNavigate();
-
-  /* ── Redirect if already logged in ── */
-  useEffect(() => {
-    const user = localStorage.getItem('user');
-    if (user) navigate('/dashboard');
-  }, [navigate]);
 
   /* ── EmailJS config ── replace with your values from emailjs.com */
   const EMAILJS_SERVICE_ID  = "service_7eo8n3g";
@@ -72,7 +65,7 @@ const Login = () => {
   /* ── Check backend (optional — works without server too) ── */
   const checkBackend = async (emailVal, phoneVal) => {
     try {
-      const res  = await fetch(`${API_BASE}/api/auth/check-user`, {
+      const res  = await fetch('/api/auth/check-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailVal || undefined, phone: phoneVal || undefined }),
@@ -158,7 +151,7 @@ const Login = () => {
 
     // Save to MongoDB if backend is running (fire and forget)
     try {
-      await fetch(`${API_BASE}/api/auth/save-user`, {
+      await fetch('/api/auth/save-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(user),
@@ -352,8 +345,16 @@ const Login = () => {
               <div className="otp-row">
                 {otp.map((digit, i) => (
                   <input key={i} id={`otp-${i}`} className="otp-digit"
-                    maxLength={1} value={digit} onChange={() => {}}
-                    onKeyDown={e => handleOtpKey(e, i)} autoFocus={i === 0}/>
+                    maxLength={1} value={digit}
+                    inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code"
+                    onChange={e => {
+                      const val = e.target.value.replace(/\D/g,'').slice(-1);
+                      if (!val) return;
+                      const next = [...otp]; next[i] = val; setOtp(next);
+                      if (i < 5) document.getElementById(`otp-${i+1}`)?.focus();
+                    }}
+                    onKeyDown={e => handleOtpKey(e, i)}
+                    autoFocus={i === 0}/>
                 ))}
               </div>
 
