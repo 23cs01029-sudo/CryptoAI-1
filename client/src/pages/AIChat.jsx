@@ -298,7 +298,8 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         .sg:hover{border-color:#6366f1;color:#6366f1;background:#f0f4ff;}
         .ic-btn{display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;transition:all .15s;flex-shrink:0;}
         .ic-btn:hover{background:rgba(99,102,241,0.08)!important;}
-        /* hist-panel styles now in responsive section above */
+        .hist-panel{width:0;flex-shrink:0;overflow:hidden;transition:width .25s cubic-bezier(.22,1,.36,1);background:white;border-left:1px solid #f1f5f9;}
+        .hist-panel.open{width:280px;}
         .sess-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .12s;margin-bottom:3px;}
         .sess-row:hover{background:#f8fafc;}
         .sess-row.active{background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.15);}
@@ -307,18 +308,6 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
-        .aic-prices{display:flex;gap:14px;flex-shrink:0;}
-        /* hist-panel styles now in responsive section above */
-        @media(max-width:640px){
-          .aic-prices{display:none!important;}
-          .aic-wrap{padding:0 12px;}
-          .aic{height:100dvh;}
-          .hist-panel.open{position:fixed;top:0;right:0;bottom:0;width:100vw;z-index:200;border-left:none;box-shadow:-4px 0 24px rgba(0,0,0,0.12);}
-          .sg{padding:8px 12px;font-size:12px;}
-        }
-        @media(max-width:400px){
-          .aic-wrap{padding:0 8px;}
-        }
       `}</style>
 
       <div className="aic">
@@ -354,7 +343,7 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
             </div>
           </div>
 
-          <div className="aic-prices">
+          <div style={{display:'flex',gap:14,flexShrink:0}}>
             {['BTCUSDT','ETHUSDT','SOLUSDT'].filter(s=>prices[s]).map(sym=>{
               const short=ALL_COINS.find(c=>c.symbol===sym)?.short;
               const p=prices[sym];

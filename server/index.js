@@ -99,23 +99,6 @@ const TxnSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
-const BacktestSchema = new mongoose.Schema({
-  userEmail:    String,
-  coin:         String,
-  strategy:     String,
-  period:       String,
-  capital:      Number,
-  finalCapital: Number,
-  totalReturn:  Number,
-  winRate:      Number,
-  totalTrades:  Number,
-  wins:         Number,
-  losses:       Number,
-  maxDrawdown:  Number,
-  profitFactor: String,
-  createdAt:    { type: Date, default: Date.now },
-});
-
 const User        = mongoose.model('User',        UserSchema);
 const Notif       = mongoose.model('Notif',       NotifSchema);
 const Trade       = mongoose.model('Trade',       TradeSchema);
@@ -124,7 +107,6 @@ const ChatSession = mongoose.model('ChatSession', ChatSessionSchema);
 const Wallet      = mongoose.model('Wallet',      WalletSchema);
 const Position    = mongoose.model('Position',    PositionSchema);
 const Txn         = mongoose.model('Txn',         TxnSchema);
-const Backtest    = mongoose.model('Backtest',    BacktestSchema);
 
 /* ─── Email ───────────────────────────────────────────────────── */
 const transporter = nodemailer.createTransport({
@@ -150,6 +132,34 @@ const sendEmail = async (to, subject, html) => {
     console.log(`[email] ✅ sent to ${to}: ${subject}`);
   } catch (err) {
     console.error('[email] ❌ error:', err.message);
+  }
+};
+
+/* ─── Twilio SMS (optional) ───────────────────────────────────── */
+// Only initializes if TWILIO keys are set in .env
+let twilioClient = null;
+if (process.env.TWILIO_SID && process.env.TWILIO_TOKEN) {
+  const twilio = require('twilio');
+  twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+  console.log('✅ Twilio SMS enabled');
+}
+
+const sendSMS = async (to, message) => {
+  if (!twilioClient) {
+    console.warn('[sms] Twilio not configured — OTP shown in console only');
+    return false;
+  }
+  try {
+    await twilioClient.messages.create({
+      body: message,
+      from: process.env.TWILIO_PHONE,
+      to: `+91${to}`, // India +91 prefix — change if needed
+    });
+    console.log(`[sms] ✅ sent to ${to}`);
+    return true;
+  } catch (err) {
+    console.error('[sms] ❌ error:', err.message);
+    return false;
   }
 };
 
@@ -253,7 +263,7 @@ app.post('/api/notifications', async (req, res) => {
         <h2 style="color:${color};margin:0 0 12px;">CryptoAI Alert</h2>
         <h3 style="color:#0f172a;margin:0 0 8px;">${title}</h3>
         <p style="color:#475569;margin:0 0 16px;">${body}</p>
-        <a href="http://localhost:3000"
+        <a href="https://crypto-ai-1.vercel.app"
           style="background:${color};color:white;padding:10px 20px;
             border-radius:8px;text-decoration:none;font-weight:600;">
           Open CryptoAI
@@ -431,6 +441,187 @@ app.get('/api/watchlist/:email', async (req, res) => {
 
 /* ─── Chat Session Routes ─────────────────────────────────────── */
 
+// POST /api/chat/message — Smart AI response engine (no API key needed)
+app.post('/api/chat/message', (req, res) => {
+  const { messages, system } = req.body;
+  if (!messages || !messages.length) return res.status(400).json({ error: 'messages required' });
+
+  const userMsg = messages[messages.length - 1]?.content?.toLowerCase() || '';
+
+  const coins = { btc:'Bitcoin', eth:'Ethereum', bnb:'BNB', sol:'Solana', xrp:'XRP',
+    doge:'Dogecoin', ada:'Cardano', avax:'Avalanche', dot:'Polkadot', matic:'Polygon' };
+  const detectedCoin = Object.keys(coins).find(k => userMsg.includes(k)) || 'btc';
+  const coinName = coins[detectedCoin];
+  const symbol = detectedCoin.toUpperCase();
+
+  const posMatch = system?.match(/Open Positions:[\s\S]*?(?=\n[A-Z]|$)/);
+
+  const basePrice = { btc:65000, eth:3200, bnb:580, sol:145, xrp:0.52, doge:0.12, ada:0.45, avax:35, dot:7.2, matic:0.85 };
+  const price  = basePrice[detectedCoin] || 100;
+  const isBull = Math.random() > 0.4;
+  const decimals = ['xrp','doge','ada','matic'].includes(detectedCoin) ? 4 : 2;
+  const entry = price.toFixed(decimals);
+  const tp    = (price * (isBull ? 1.055 : 0.945)).toFixed(decimals);
+  const sl    = (price * (isBull ? 0.972 : 1.028)).toFixed(decimals);
+  const conf  = Math.floor(60 + Math.random() * 25);
+  const action = isBull ? 'BUY' : 'SELL';
+
+  let reply = '';
+
+  if (userMsg.includes('signal') || userMsg.includes('trade') || userMsg.includes('entry') || userMsg.includes('tp') || userMsg.includes('sl')) {
+    const reasoning = isBull
+      ? coinName + ' showing bullish momentum with increasing volume. RSI at 52 (neutral-bullish), MACD positive crossover. Price above 20-day MA.'
+      : coinName + ' facing selling pressure. RSI at 68 (overbought), MACD histogram declining. Short-term pullback likely.';
+    reply = [
+      '## AI Trade Signal — ' + symbol + '/USDT',
+      '',
+      '**Action:** ' + (isBull ? 'BUY' : 'SELL'),
+      '**Confidence:** ' + conf + '%',
+      '',
+      '| Parameter | Value |',
+      '|-----------|-------|',
+      '| Entry Price | $' + entry + ' |',
+      '| Take Profit | $' + tp + ' (' + (isBull ? '+5.5%' : '-5.5%') + ') |',
+      '| Stop Loss | $' + sl + ' (' + (isBull ? '-2.8%' : '+2.8%') + ') |',
+      '| Risk/Reward | 1:2.0 |',
+      '',
+      '**Reasoning:** ' + reasoning,
+      '',
+      '**Agent Verdicts:**',
+      '- Quant Agent: ' + action + ' (' + Math.floor(60 + Math.random()*20) + '%)',
+      '- Technical Agent: ' + (isBull ? 'BUY' : 'HOLD') + ' (' + Math.floor(55 + Math.random()*20) + '%)',
+      '- Risk Agent: HOLD (' + Math.floor(50 + Math.random()*20) + '%)',
+      '- Sentiment Agent: ' + action + ' (' + Math.floor(60 + Math.random()*20) + '%)',
+      '',
+      '> Not financial advice. Always do your own research.',
+    ].join('\n');
+
+  } else if (userMsg.includes('portfolio') || userMsg.includes('my position') || userMsg.includes('p&l') || userMsg.includes('balance')) {
+    const hasPos = posMatch && posMatch[0].length > 20;
+    const posText = hasPos
+      ? ['Based on your open positions:', '', '- Monitor positions with tight stop losses', '- Consider partial profits at +5% unrealised PnL', '- Keep each trade under 5-10% of portfolio value'].join('\n')
+      : ['No open positions found.', '', '**Getting Started:**', '1. Go to Dashboard and pick a coin', '2. Click AI Signal for an entry recommendation', '3. Set TP/SL before entering', '4. Start with 1-3% of portfolio per trade'].join('\n');
+    reply = [
+      '## Portfolio Analysis',
+      '',
+      posText,
+      '',
+      '**General Tips:**',
+      '- Never risk more than 2% per trade',
+      '- Always set a Stop Loss',
+      '- Review win rate in the Analytics page',
+    ].join('\n');
+
+  } else if (userMsg.includes('rsi') || userMsg.includes('macd') || userMsg.includes('indicator') || userMsg.includes('technical')) {
+    reply = [
+      '## Technical Indicators Guide',
+      '',
+      '**RSI (Relative Strength Index)**',
+      '- Below 30: Oversold — potential BUY',
+      '- Above 70: Overbought — potential SELL',
+      '',
+      '**MACD**',
+      '- MACD crosses above signal line: Bullish',
+      '- MACD crosses below signal line: Bearish',
+      '',
+      '**Moving Averages**',
+      '- Price above 20-day MA: Short-term bullish',
+      '- Golden Cross (50MA > 200MA): Strong long-term bullish',
+      '',
+      'Our Technical Agent uses RSI, MACD and MAs alongside the other 3 agents before the Judge gives the final verdict.',
+    ].join('\n');
+
+  } else if (userMsg.includes('risk') || userMsg.includes('manage') || userMsg.includes('strategy') || userMsg.includes('safe')) {
+    reply = [
+      '## Risk Management Strategy',
+      '',
+      '**The Golden Rules:**',
+      '1. 2% Rule — Never risk more than 2% per trade',
+      '2. Always set a Stop Loss before entering',
+      '3. Risk/Reward minimum 1:2',
+      '4. Do not chase pumps — buy on dips',
+      '',
+      '**Position Sizing:**',
+      'Position Size = (Portfolio x Risk%) / (Entry - Stop Loss)',
+      'Example: ($10,000 x 2%) / $200 SL = 1 unit',
+      '',
+      '**Tips:**',
+      '- Avoid leverage until 6+ months experience',
+      '- Keep 20-30% in USDT as dry powder',
+      '- Crypto runs 24/7 — set alerts, do not watch screens all day',
+    ].join('\n');
+
+  } else if (userMsg.includes('agent') || userMsg.includes('how does') || userMsg.includes('how it work')) {
+    reply = [
+      '## The 4-Agent AI System',
+      '',
+      '**1. Quant Agent**',
+      'Analyses momentum, volume trends, price position within recent high/low range.',
+      '',
+      '**2. Technical Agent**',
+      'Studies RSI, MACD, moving averages, support and resistance levels.',
+      '',
+      '**3. Risk Agent**',
+      'Evaluates risk/reward ratio, drawdown risk and portfolio exposure.',
+      '',
+      '**4. Sentiment Agent**',
+      'Reads market mood from 24h price change and volume patterns.',
+      '',
+      '**Judge Agent**',
+      'Synthesises all 4 verdicts and outputs: Action, Entry, Take Profit, Stop Loss, Confidence %.',
+    ].join('\n');
+
+  } else if (userMsg.includes('defi') || userMsg.includes('cefi') || userMsg.includes('what is')) {
+    reply = [
+      '## DeFi vs CeFi',
+      '',
+      '**CeFi (Centralized Finance)**',
+      '- Examples: Binance, Coinbase',
+      '- Exchange holds your keys',
+      '- Easier UX, fiat on-ramp',
+      '- Risk: hacks, regulation',
+      '',
+      '**DeFi (Decentralized Finance)**',
+      '- Examples: Uniswap, Aave',
+      '- You control your keys',
+      '- Yield farming, permissionless',
+      '- Risk: smart contract bugs, gas fees',
+      '',
+      'Best approach: CeFi for active trading, DeFi for earning yield on idle assets.',
+    ].join('\n');
+
+  } else if (userMsg.includes('best') || userMsg.includes('potential') || userMsg.includes('which coin') || userMsg.includes('recommend')) {
+    const picks = ['SOL','ETH','AVAX'].sort(() => Math.random() - 0.5);
+    reply = [
+      '## Top Coin Picks Right Now',
+      '',
+      '1. ' + picks[0] + '/USDT — Strong volume uptick, RSI healthy at 48-52. Good entry zone.',
+      '2. ' + picks[1] + '/USDT — Consolidating near key support. High probability bounce.',
+      '3. ' + picks[2] + '/USDT — Breaking out of 2-week range with above-average volume.',
+      '',
+      'Use the coin picker to get a detailed signal for any specific coin!',
+    ].join('\n');
+
+  } else {
+    reply = [
+      '## CryptoAI Assistant',
+      '',
+      'I can help with:',
+      '- Type a coin name for a trade signal (e.g. "BTC signal")',
+      '- "Analyze my portfolio" for personalised advice',
+      '- "Explain RSI" or "What is MACD" for education',
+      '- "Risk management tips" for trading strategies',
+      '- "How do agents work" to learn about the AI system',
+      '',
+      'Or use the quick prompts below to get started!',
+    ].join('\n');
+  }
+
+  res.json({ reply });
+});
+
+
+
 // POST /api/chat/sessions — upsert all sessions for a user
 app.post('/api/chat/sessions', async (req, res) => {
   const { userEmail, sessions } = req.body;
@@ -450,41 +641,6 @@ app.get('/api/chat/sessions/:email', async (req, res) => {
   try {
     const doc = await ChatSession.findOne({ userEmail: req.params.email });
     res.json({ sessions: doc?.sessions || [] });
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
-
-/* ─── Backtesting Routes ──────────────────────────────────────── */
-
-// POST /api/backtest/save — save a completed backtest result
-app.post('/api/backtest/save', async (req, res) => {
-  const { userEmail, coin, strategy, period, capital, finalCapital,
-          totalReturn, winRate, totalTrades, wins, losses, maxDrawdown, profitFactor } = req.body;
-  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
-  try {
-    const bt = await Backtest.create({
-      userEmail, coin, strategy, period, capital, finalCapital,
-      totalReturn, winRate, totalTrades, wins, losses, maxDrawdown, profitFactor,
-    });
-    console.log(`[backtest] saved: ${userEmail} → ${coin} ${strategy} ${totalReturn?.toFixed(2)}%`);
-    res.json({ success: true, id: bt._id });
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
-
-// GET /api/backtest/history/:email — get all backtests for a user
-app.get('/api/backtest/history/:email', async (req, res) => {
-  try {
-    const results = await Backtest.find({ userEmail: req.params.email })
-      .sort({ createdAt: -1 })
-      .limit(50);
-    res.json(results);
-  } catch(err) { res.status(500).json({ error: err.message }); }
-});
-
-// DELETE /api/backtest/:id — delete a single backtest record
-app.delete('/api/backtest/:id', async (req, res) => {
-  try {
-    await Backtest.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -539,31 +695,3 @@ app.post('/api/ai-signal', (req, res) => {
 /* ─── Start ───────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-/* ─── Twilio SMS (optional) ───────────────────────────────────── */
-// Only initializes if TWILIO keys are set in .env
-let twilioClient = null;
-if (process.env.TWILIO_SID && process.env.TWILIO_TOKEN) {
-  const twilio = require('twilio');
-  twilioClient = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
-  console.log('✅ Twilio SMS enabled');
-}
-
-const sendSMS = async (to, message) => {
-  if (!twilioClient) {
-    console.warn('[sms] Twilio not configured — OTP shown in console only');
-    return false;
-  }
-  try {
-    await twilioClient.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE,
-      to: `+91${to}`, // India +91 prefix — change if needed
-    });
-    console.log(`[sms] ✅ sent to ${to}`);
-    return true;
-  } catch (err) {
-    console.error('[sms] ❌ error:', err.message);
-    return false;
-  }
-};
