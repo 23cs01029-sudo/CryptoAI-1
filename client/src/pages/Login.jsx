@@ -63,16 +63,24 @@ const Login = () => {
   };
 
   /* ── Check backend (optional — works without server too) ── */
+
+  /* ── Check backend ── */
   const checkBackend = async (emailVal, phoneVal) => {
     try {
-      const res  = await fetch('/api/auth/check-user', {
+      setErrMsg('Checking account…');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`${API_BASE}/api/auth/check-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailVal || undefined, phone: phoneVal || undefined }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       const data = await res.json();
+      setErrMsg('');
       if (isSignup && data.exists) {
-        setErrMsg('Account already exists with this email. Please login.');
+        setErrMsg('Account already exists. Please login instead.');
         return false;
       }
       if (!isSignup && !data.exists) {
@@ -80,8 +88,13 @@ const Login = () => {
         return false;
       }
       return true;
-    } catch {
-      return true; // backend offline — skip check
+    } catch (err) {
+      setErrMsg('');
+      if (err.name === 'AbortError') {
+        setErrMsg('Server is waking up, please try again in 30 seconds.');
+        return false;
+      }
+      return true;
     }
   };
 
@@ -346,14 +359,22 @@ const Login = () => {
                 {otp.map((digit, i) => (
                   <input key={i} id={`otp-${i}`} className="otp-digit"
                     maxLength={1} value={digit}
-                    inputMode="numeric" pattern="[0-9]*" autoComplete="one-time-code"
+                    inputMode="numeric" pattern="[0-9]*"
+                    autoComplete="one-time-code"
                     onChange={e => {
-                      const val = e.target.value.replace(/\D/g,'').slice(-1);
+                      const raw = e.target.value;
+                      const val = raw.replace(/[^0-9]/g, '').slice(-1);
                       if (!val) return;
                       const next = [...otp]; next[i] = val; setOtp(next);
                       if (i < 5) document.getElementById(`otp-${i+1}`)?.focus();
                     }}
-                    onKeyDown={e => handleOtpKey(e, i)}
+                    onKeyDown={e => {
+                      if (e.key === 'Backspace') {
+                        e.preventDefault();
+                        const next = [...otp]; next[i] = ''; setOtp(next);
+                        if (i > 0) document.getElementById(`otp-${i-1}`)?.focus();
+                      }
+                    }}
                     autoFocus={i === 0}/>
                 ))}
               </div>
