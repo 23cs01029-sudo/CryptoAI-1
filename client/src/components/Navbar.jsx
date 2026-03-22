@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 const NAV_LINKS = [
   { path: "/dashboard",     label: "Dashboard",
     icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> },
@@ -78,7 +82,7 @@ const Navbar = ({ notifCount = 0 }) => {
       const userEmail = user.email;
       if (!userEmail) return;
       // Wallet sync
-      fetch(`/api/wallet/${userEmail}`)
+      fetch(`${API_BASE}/api/wallet/${userEmail}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.balances) {
@@ -88,7 +92,7 @@ const Navbar = ({ notifCount = 0 }) => {
           }
         }).catch(() => {});
       // Notifications sync
-      fetch(`/api/notifications/${userEmail}`)
+      fetch(`${API_BASE}/api/notifications/${userEmail}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (!Array.isArray(data) || data.length === 0) return;
@@ -382,10 +386,10 @@ const Navbar = ({ notifCount = 0 }) => {
                 )}
                 <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   {unread>0&&<span style={{fontSize:11,color:"#6366f1",fontWeight:600}}>{unread} unread</span>}
-                  <Link to="/notifications" onClick={()=>setNotifOpen(false)}
-                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none",marginLeft:"auto"}}>
+                  <button onClick={()=>{ setNotifOpen(false); navigate("/notifications"); }}
+                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",background:"none",border:"none",cursor:"pointer",marginLeft:"auto",fontFamily:"'DM Sans',sans-serif",padding:0}}>
                     View all →
-                  </Link>
+                  </button>
                 </div>
               </div>
             )}
@@ -555,10 +559,10 @@ const Navbar = ({ notifCount = 0 }) => {
                 ))}
                 <div style={{padding:"10px 14px",borderTop:"1px solid #f1f5f9",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   {unread>0&&<span style={{fontSize:11,color:"#6366f1",fontWeight:600}}>{unread} unread</span>}
-                  <Link to="/notifications" onClick={()=>setNotifOpen(false)}
-                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",textDecoration:"none",marginLeft:"auto"}}>
+                  <button onClick={()=>{ setNotifOpen(false); navigate("/notifications"); }}
+                    style={{fontSize:12.5,fontWeight:600,color:"#4f46e5",background:"none",border:"none",cursor:"pointer",marginLeft:"auto",fontFamily:"'DM Sans',sans-serif",padding:0}}>
                     View all →
-                  </Link>
+                  </button>
                 </div>
               </div>
             )}
