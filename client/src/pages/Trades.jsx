@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 /* ─── Helpers ────────────────────────────────────────────────── */
 const getWallet = () => {
   try { return JSON.parse(localStorage.getItem('wallet') || '{"USDT":10000}'); }
@@ -28,7 +32,7 @@ const getUserEmail = () => {
 
 const syncWallet = (wallet) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/wallet', {
+  fetch(`${API_BASE}/api/wallet`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, balances: wallet }),
   }).catch(()=>{});
@@ -36,7 +40,7 @@ const syncWallet = (wallet) => {
 
 const syncPositions = (positions) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/positions', {
+  fetch(`${API_BASE}/api/positions`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, positions }),
   }).catch(()=>{});
@@ -44,7 +48,7 @@ const syncPositions = (positions) => {
 
 const syncTxns = (txns) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/txns', {
+  fetch(`${API_BASE}/api/txns`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, txns }),
   }).catch(()=>{});
@@ -52,7 +56,7 @@ const syncTxns = (txns) => {
 
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/trades', {
+  fetch(`${API_BASE}/api/trades`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, type, coin, symbol, qty, price, pnl }),
   }).catch(()=>{});
@@ -60,7 +64,7 @@ const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
 
 const syncWatchlist = (watchlist) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/watchlist', {
+  fetch(`${API_BASE}/api/watchlist`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, symbols: watchlist }),
   }).catch(()=>{});
@@ -85,7 +89,7 @@ const pushNotif = (type, title, body, meta={}) => {
             { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
             EMAILJS_PUBLIC_KEY).catch(()=>{});
         }
-        fetch('/api/notifications', {
+        fetch(`${API_BASE}/api/notifications`, {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ userEmail, type, title, body, meta }),
         }).catch(()=>{});
@@ -535,10 +539,10 @@ const Trades = () => {
   useEffect(()=>{
     const userEmail = getUserEmail(); if (!userEmail) return;
     Promise.all([
-      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
     ]).then(([wRes, pRes, tRes, wlRes])=>{
       if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); setWallet(wRes.balances); window.dispatchEvent(new Event('walletUpdate')); }
       if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); setPositions(pRes.positions); }
@@ -644,7 +648,7 @@ const Trades = () => {
   /* Load watchlist from MongoDB on mount */
   useEffect(() => {
     const userEmail = getUserEmail(); if (!userEmail) return;
-    fetch(`/api/watchlist/${userEmail}`)
+    fetch(`${API_BASE}/api/watchlist/${userEmail}`)
       .then(r => r.json())
       .then(data => {
         if (data.symbols?.length > 0) {
@@ -749,7 +753,7 @@ const Trades = () => {
     const low =candles.length?Math.min(...candles.slice(-20).map(c=>c.l)):price*0.98;
     const prompt=`You are a crypto trading AI system with 4 specialist agents analyzing ${selected.short}/USDT.\n\nCurrent market data:\n- Price: $${price.toFixed(4)}\n- 24h Change: ${change.toFixed(2)}%\n- 24h Volume: $${(vol/1e6).toFixed(1)}M\n- Recent 20-candle High: $${high.toFixed(4)}\n- Recent 20-candle Low: $${low.toFixed(4)}\n- Recent prices (last 10): ${recentPrices.slice(-10).map(p=>p.toFixed(2)).join(', ')}\n\nYou must respond with ONLY valid JSON, no markdown:\n{"action":"BUY or SELL","confidence":number 40-95,"entry":"${price.toFixed(4)}","tp":"take profit 4 decimals","sl":"stop loss 4 decimals","reason":"one sentence","agents":[{"name":"Quant Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Technical Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Risk Agent","verdict":"BUY or SELL or HOLD","score":number},{"name":"Sentiment Agent","verdict":"BUY or SELL or HOLD","score":number}]}`;
     try{
-      const res=await fetch('/api/ai-signal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})});
+      const res=await fetch(`${API_BASE}/api/ai-signal`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:prompt}]})});
       const data=await res.json();
       const parsed=JSON.parse((data.content?.[0]?.text||'').replace(/```json|```/g,'').trim());
       setAiSignal(parsed);
