@@ -34,6 +34,7 @@ const syncPositions = (positions) => {
   }).catch(()=>{});
 };
 
+// eslint-disable-next-line no-unused-vars
 const syncTxns = (txns) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
   fetch('/api/txns', {
@@ -463,7 +464,6 @@ const Watchlist = () => {
   const [prices,   setPrices]   = useState({});
   const [changes,  setChanges]  = useState({});
   const [volumes,  setVolumes]  = useState({});
-  // eslint-disable-next-line no-unused-vars
   const [prevPrices, setPrevPrices] = useState({}); // for alert detection
 
   const [watchlist, setWatchlist] = useState(()=>{
