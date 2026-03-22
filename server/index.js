@@ -5,7 +5,14 @@ const mongoose   = require('mongoose');
 const nodemailer = require('nodemailer');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'https://crypto-ai-1.vercel.app',
+    'https://cryptoai-server.onrender.com',
+  ],
+  credentials: true,
+}));
 app.use(express.json());
 
 /* ─── MongoDB ─────────────────────────────────────────────────── */
