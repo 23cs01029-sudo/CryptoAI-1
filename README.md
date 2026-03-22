@@ -281,5 +281,4 @@ TWILIO_PHONE   = optional
 | Deployment link | https://crypto-ai-1.vercel.app |
 | Backend API | https://cryptoai-server.onrender.com |
 | GitHub repository | https://github.com/23cs01029-sudo/CryptoAI-1 |
-| Presentation | /presentation/CryptoAI_Presentation.pptx |
-| Documentation | /docs/Documentation.docx |
+
