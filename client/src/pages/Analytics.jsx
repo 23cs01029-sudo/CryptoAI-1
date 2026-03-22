@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 /* ─── Data helpers ───────────────────────────────────────────── */
 const getPositions = () => { try { return JSON.parse(localStorage.getItem('positions') || '[]'); } catch { return []; } };
 const getWallet    = () => { try { return JSON.parse(localStorage.getItem('wallet')    || '{"USDT":10000}'); } catch { return { USDT: 10000 }; } };
@@ -178,9 +182,9 @@ const Analytics = () => {
       const userEmail = JSON.parse(localStorage.getItem('user') || '{}').email;
       if (!userEmail) return;
       Promise.all([
-        fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-        fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-        fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`${API_BASE}/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`${API_BASE}/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`${API_BASE}/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
       ]).then(([wRes, pRes, tRes]) => {
         let changed = false;
         if (wRes.balances)              { localStorage.setItem('wallet',      JSON.stringify(wRes.balances));    changed = true; }

@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 /* ─── Helpers ─────────────────────────────────────────────────── */
 const getNotifs = () => {
   try { return JSON.parse(localStorage.getItem('notifications') || '[]'); }
@@ -36,7 +40,7 @@ const getUserEmail = () => {
 
 const syncNotifsDB = (notifs) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/notifications/sync', {
+  fetch(`${API_BASE}/api/notifications/sync`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, notifications: notifs }),
   }).catch(()=>{});
@@ -229,7 +233,7 @@ const Notifications = () => {
     const n = notifs.filter(x => x.id !== id);
     setNotifs(n); saveNotifs(n);
     const userEmail = getUserEmail();
-    if (userEmail) fetch(`/api/notifications/item/${id}`, { method:'DELETE' }).catch(()=>{});
+    if (userEmail) fetch(`${API_BASE}/api/notifications/item/${id}`, { method:'DELETE' }).catch(()=>{});
   };
   const clearAll = () => {
     saveNotifs([]); setNotifs([]);

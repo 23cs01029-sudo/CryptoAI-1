@@ -1,5 +1,9 @@
 import { useState, useEffect } from "react";
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 const getWallet = () => {
   try { return JSON.parse(localStorage.getItem("wallet") || '{"USDT":10000}'); }
   catch { return { USDT: 10000 }; }
@@ -11,13 +15,13 @@ const getUserEmail = () => {
 
 const syncWalletDB = (w) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/wallet', { method:'POST', headers:{'Content-Type':'application/json'},
+  fetch(`${API_BASE}/api/wallet`, { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, balances: w }) }).catch(()=>{});
 };
 
 const syncTxnsDB = (t) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/txns', { method:'POST', headers:{'Content-Type':'application/json'},
+  fetch(`${API_BASE}/api/txns`, { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ userEmail, txns: t }) }).catch(()=>{});
 };
 
@@ -55,8 +59,8 @@ const Wallet = () => {
   useEffect(() => {
     const userEmail = getUserEmail(); if (!userEmail) return;
     Promise.all([
-      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`${API_BASE}/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
     ]).then(([wRes, tRes]) => {
       if (wRes.balances) {
         localStorage.setItem('wallet', JSON.stringify(wRes.balances));

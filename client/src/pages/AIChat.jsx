@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? 'https://cryptoai-server.onrender.com'
+  : '';
+
 const getWallet = () => { try { return JSON.parse(localStorage.getItem('wallet') || '{"USDT":10000}'); } catch { return { USDT: 10000 }; } };
 const getPositions = () => { try { return JSON.parse(localStorage.getItem('positions') || '[]'); } catch { return []; } };
 const getSessions = () => { try { return JSON.parse(localStorage.getItem('ai_chat_sessions') || '[]'); } catch { return []; } };
@@ -13,7 +17,7 @@ const getUserEmail = () => {
 
 const syncSessions = (sessions) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/chat/sessions', {
+  fetch(`${API_BASE}/api/chat/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userEmail, sessions }),
@@ -128,15 +132,15 @@ const AIChat = () => {
     if (userEmail) {
       // Load wallet + positions from MongoDB so AI chat has fresh portfolio context
       Promise.all([
-        fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
-        fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`${API_BASE}/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`${API_BASE}/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
       ]).then(([wRes, pRes]) => {
         if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); window.dispatchEvent(new Event('walletUpdate')); }
         if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); }
       }).catch(() => {});
 
       setSyncing(true);
-      fetch(`/api/chat/sessions/${encodeURIComponent(userEmail)}`)
+      fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(userEmail)}`)
         .then(r => r.json())
         .then(data => {
           setSyncing(false);
