@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import API_BASE from '../api';
 import { useNavigate } from "react-router-dom";
 
 const Login = () => {
@@ -21,6 +22,12 @@ const Login = () => {
   const [loading, setLoading]           = useState(false);
 
   const navigate = useNavigate();
+
+  /* ── Redirect if already logged in ── */
+  useEffect(() => {
+    const user = localStorage.getItem('user');
+    if (user) navigate('/dashboard');
+  }, [navigate]);
 
   /* ── EmailJS config ── replace with your values from emailjs.com */
   const EMAILJS_SERVICE_ID  = "service_7eo8n3g";
@@ -65,7 +72,7 @@ const Login = () => {
   /* ── Check backend (optional — works without server too) ── */
   const checkBackend = async (emailVal, phoneVal) => {
     try {
-      const res  = await fetch('/api/auth/check-user', {
+      const res  = await fetch(`${API_BASE}/api/auth/check-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailVal || undefined, phone: phoneVal || undefined }),
@@ -151,7 +158,7 @@ const Login = () => {
 
     // Save to MongoDB if backend is running (fire and forget)
     try {
-      await fetch('/api/auth/save-user', {
+      await fetch(`${API_BASE}/api/auth/save-user`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(user),

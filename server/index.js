@@ -193,6 +193,16 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   res.json({ success: true, user: { email, phone } });
 });
 
+// POST /api/auth/check-user — check if user exists
+app.post('/api/auth/check-user', async (req, res) => {
+  const { email, phone } = req.body;
+  const query = email ? { email } : { phone };
+  try {
+    const user = await User.findOne(query);
+    res.json({ exists: !!user });
+  } catch(err) { res.status(500).json({ exists: false }); }
+});
+
 // POST /api/auth/save-user — called after OTP verified on frontend
 app.post('/api/auth/save-user', async (req, res) => {
   const { name, email, phone, dob } = req.body;
