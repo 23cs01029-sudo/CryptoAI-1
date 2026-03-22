@@ -7,6 +7,7 @@ import AIChat        from "./pages/AIChat";
 import Analytics     from "./pages/Analytics";
 import Notifications from "./pages/Notifications";
 import Wallet        from "./pages/Wallet";
+import Backtesting   from "./pages/Backtesting";
 import Layout        from "./layout/Layout";
 
 const Protected = ({ children }) => {
@@ -34,6 +35,7 @@ function App() {
         <Route path="/analytics"     element={wrap(Analytics)} />
         <Route path="/notifications" element={wrap(Notifications)} />
         <Route path="/wallet"        element={wrap(Wallet)} />
+        <Route path="/backtesting"   element={wrap(Backtesting)} />
         <Route path="*"              element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

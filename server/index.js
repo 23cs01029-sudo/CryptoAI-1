@@ -99,6 +99,23 @@ const TxnSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
+const BacktestSchema = new mongoose.Schema({
+  userEmail:    String,
+  coin:         String,
+  strategy:     String,
+  period:       String,
+  capital:      Number,
+  finalCapital: Number,
+  totalReturn:  Number,
+  winRate:      Number,
+  totalTrades:  Number,
+  wins:         Number,
+  losses:       Number,
+  maxDrawdown:  Number,
+  profitFactor: String,
+  createdAt:    { type: Date, default: Date.now },
+});
+
 const User        = mongoose.model('User',        UserSchema);
 const Notif       = mongoose.model('Notif',       NotifSchema);
 const Trade       = mongoose.model('Trade',       TradeSchema);
@@ -107,6 +124,7 @@ const ChatSession = mongoose.model('ChatSession', ChatSessionSchema);
 const Wallet      = mongoose.model('Wallet',      WalletSchema);
 const Position    = mongoose.model('Position',    PositionSchema);
 const Txn         = mongoose.model('Txn',         TxnSchema);
+const Backtest    = mongoose.model('Backtest',    BacktestSchema);
 
 /* ─── Email ───────────────────────────────────────────────────── */
 const transporter = nodemailer.createTransport({
@@ -432,6 +450,41 @@ app.get('/api/chat/sessions/:email', async (req, res) => {
   try {
     const doc = await ChatSession.findOne({ userEmail: req.params.email });
     res.json({ sessions: doc?.sessions || [] });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+/* ─── Backtesting Routes ──────────────────────────────────────── */
+
+// POST /api/backtest/save — save a completed backtest result
+app.post('/api/backtest/save', async (req, res) => {
+  const { userEmail, coin, strategy, period, capital, finalCapital,
+          totalReturn, winRate, totalTrades, wins, losses, maxDrawdown, profitFactor } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    const bt = await Backtest.create({
+      userEmail, coin, strategy, period, capital, finalCapital,
+      totalReturn, winRate, totalTrades, wins, losses, maxDrawdown, profitFactor,
+    });
+    console.log(`[backtest] saved: ${userEmail} → ${coin} ${strategy} ${totalReturn?.toFixed(2)}%`);
+    res.json({ success: true, id: bt._id });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/backtest/history/:email — get all backtests for a user
+app.get('/api/backtest/history/:email', async (req, res) => {
+  try {
+    const results = await Backtest.find({ userEmail: req.params.email })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json(results);
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/backtest/:id — delete a single backtest record
+app.delete('/api/backtest/:id', async (req, res) => {
+  try {
+    await Backtest.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
