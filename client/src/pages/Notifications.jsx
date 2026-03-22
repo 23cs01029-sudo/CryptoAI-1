@@ -10,7 +10,6 @@ const saveNotifs = (n) => {
   window.dispatchEvent(new Event('notifUpdate'));
 };
 
-// eslint-disable-next-line no-unused-vars
 const getPositions = () => {
   try { return JSON.parse(localStorage.getItem('positions') || '[]'); }
   catch { return []; }
@@ -139,7 +138,8 @@ const Notifications = () => {
   const [notifs,     setNotifs]     = useState(getNotifs);
   const [filter,     setFilter]     = useState('all');
   const [prices,     setPrices]     = useState({});
-  const [__prevChanges,setPrevChanges]= useState({});
+  // eslint-disable-next-line no-unused-vars
+  const [prevChanges,setPrevChanges]= useState({});
   const [watchlist,  setWatchlist]  = useState(getWatchlist);
   const wsRef = useRef(null);
 

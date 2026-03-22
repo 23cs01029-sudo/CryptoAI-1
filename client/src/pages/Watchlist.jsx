@@ -34,7 +34,13 @@ const syncPositions = (positions) => {
   }).catch(()=>{});
 };
 
-
+const syncTxns = (txns) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns }),
+  }).catch(()=>{});
+};
 
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
@@ -457,7 +463,8 @@ const Watchlist = () => {
   const [prices,   setPrices]   = useState({});
   const [changes,  setChanges]  = useState({});
   const [volumes,  setVolumes]  = useState({});
-  const [__prevPrices, setPrevPrices] = useState({}); // for alert detection
+  // eslint-disable-next-line no-unused-vars
+  const [prevPrices, setPrevPrices] = useState({}); // for alert detection
 
   const [watchlist, setWatchlist] = useState(()=>{
     try { return JSON.parse(localStorage.getItem('watchlist')||'[]'); } catch { return []; }

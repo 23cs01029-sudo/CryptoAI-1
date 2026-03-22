@@ -371,6 +371,7 @@ const Wallet = () => {
               </div>
             ) : txns.map(txn => {
               const isDeposit = txn.type === "DEPOSIT";
+              // eslint-disable-next-line no-unused-vars
               const isReset   = txn.type === "RESET";
               const isBuy     = txn.type === "BUY";
               const isSell    = txn.type === "SELL";
