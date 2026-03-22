@@ -4,17 +4,6 @@ const API_BASE = process.env.NODE_ENV === 'production'
   ? 'https://cryptoai-server.onrender.com'
   : '';
 
-/* ─── Helpers ─────────────────────────────────────────────────── */
-const getNotifs = () => {
-  try { return JSON.parse(localStorage.getItem('notifications') || '[]'); }
-  catch { return []; }
-};
-
-const getUserEmail = () => {
-  try { return JSON.parse(localStorage.getItem('user') || '{}').email || null; }
-  catch { return null; }
-};
-
 /* ── EmailJS price alert ── */
 const EMAILJS_SERVICE_ID  = 'service_7eo8n3g';
 const EMAILJS_TEMPLATE_ID = 'template_xpa7txr';
@@ -26,6 +15,17 @@ const sendPriceAlertEmail = (userEmail, title, body) => {
     { to_email: userEmail, title, body, type: 'price', app_name: 'CryptoAI' },
     EMAILJS_PUBLIC_KEY
   ).catch(() => {});
+};
+
+/* ─── Helpers ─────────────────────────────────────────────────── */
+const getNotifs = () => {
+  try { return JSON.parse(localStorage.getItem('notifications') || '[]'); }
+  catch { return []; }
+};
+
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user') || '{}').email || null; }
+  catch { return null; }
 };
 
 /* Save to localStorage + fire UI event */
@@ -281,10 +281,10 @@ const Notifications = () => {
               const n = makeNotif('price', alertTitle, alertBody, { coin, sym, change: chg });
               setNotifs(cur => {
                 const next = [n, ...cur].slice(0, 100);
-                saveAndSync(next);   // ← save + sync to MongoDB
+                saveAndSync(next);   // save + sync to MongoDB
                 return next;
               });
-              // Send email alert for price move
+              // Send email for price alert
               const ue = getUserEmail();
               if (ue) sendPriceAlertEmail(ue, alertTitle, alertBody);
             }
