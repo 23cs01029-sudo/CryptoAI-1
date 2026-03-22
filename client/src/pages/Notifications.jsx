@@ -28,6 +28,19 @@ const ALL_COINS = [
   {symbol:'DOTUSDT',short:'DOT',color:'#e6007a'},{symbol:'MATICUSDT',short:'MATIC',color:'#8247e5'},
 ];
 
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+const syncNotifsDB = (notifs) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/notifications/sync', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, notifications: notifs }),
+  }).catch(()=>{});
+};
+
 const makeNotif = (type, title, body, meta = {}) => ({
   id: Date.now() + Math.random(),
   type, title, body, meta,
@@ -58,28 +71,60 @@ const isYesterday = (iso) => { try { const y = new Date(); y.setDate(y.getDate()
 /* ─── Card ────────────────────────────────────────────────────── */
 const NotifCard = ({ notif, onRead, onDelete }) => {
   const cfg = TYPE_CFG[notif.type] || TYPE_CFG.system;
+  const [hov, setHov] = useState(false);
   return (
-    <div onClick={() => onRead(notif.id)}
-      style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'14px 16px',
-        background: notif.read ? 'white' : 'rgba(99,102,241,0.03)',
+    <div
+      onClick={() => onRead(notif.id)}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display:'flex', alignItems:'flex-start', gap:12, padding:'14px 16px',
+        background: hov ? '#f8fafc' : notif.read ? 'white' : 'rgba(99,102,241,0.03)',
         borderLeft: `3px solid ${notif.read ? 'transparent' : '#6366f1'}`,
-        borderBottom:'1px solid #f1f5f9', cursor:'pointer', transition:'background .15s' }}
-      onMouseEnter={e => e.currentTarget.style.background='#f8fafc'}
-      onMouseLeave={e => e.currentTarget.style.background=notif.read?'white':'rgba(99,102,241,0.03)'}>
-      <div style={{ width:40,height:40,borderRadius:12,flexShrink:0,background:cfg.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,marginTop:2 }}>{cfg.icon}</div>
-      <div style={{ flex:1,minWidth:0 }}>
+        borderBottom:'1px solid #f1f5f9', cursor:'pointer', transition:'background .15s',
+      }}>
+      <div style={{ width:40,height:40,borderRadius:12,flexShrink:0,background:cfg.bg,
+        display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,marginTop:2 }}>
+        {cfg.icon}
+      </div>
+      <div style={{ flex:1,minWidth:0,paddingRight:6 }}>
         <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:3 }}>
-          <span style={{ padding:'1px 7px',borderRadius:5,fontSize:10,fontWeight:700,background:cfg.bg,color:cfg.color }}>{cfg.label}</span>
+          <span style={{ padding:'1px 7px',borderRadius:5,fontSize:10,fontWeight:700,
+            background:cfg.bg,color:cfg.color }}>{cfg.label}</span>
           {!notif.read && <div style={{ width:6,height:6,borderRadius:'50%',background:'#6366f1',flexShrink:0 }}/>}
         </div>
-        <div style={{ fontSize:13.5,fontWeight:notif.read?400:600,color:'#0f172a',marginBottom:3,fontFamily:"'DM Sans',sans-serif" }}>{notif.title}</div>
+        <div style={{ fontSize:13.5,fontWeight:notif.read?400:600,color:'#0f172a',
+          marginBottom:3,fontFamily:"'DM Sans',sans-serif" }}>{notif.title}</div>
         <div style={{ fontSize:12,color:'#64748b',lineHeight:1.5 }}>{notif.body}</div>
         <div style={{ fontSize:11,color:'#94a3b8',marginTop:5 }}>{fmtTime(notif.time)}</div>
       </div>
-      <button onClick={e=>{e.stopPropagation();onDelete(notif.id);}}
-        style={{ background:'none',border:'none',cursor:'pointer',color:'#cbd5e1',fontSize:14,padding:'2px 4px',borderRadius:4,flexShrink:0,opacity:0,transition:'opacity .15s' }}
-        onMouseEnter={e=>{e.currentTarget.style.opacity=1;e.currentTarget.style.color='#ef4444';}}
-        onMouseLeave={e=>{e.currentTarget.style.opacity=0;e.currentTarget.style.color='#cbd5e1';}}>✕</button>
+      <button
+        onClick={e => { e.stopPropagation(); onDelete(notif.id); }}
+        title="Delete"
+        style={{
+          flexShrink:0, alignSelf:'center',
+          width:28, height:28, borderRadius:8,
+          border:'1.5px solid rgba(239,68,68,0.25)',
+          background:'rgba(239,68,68,0.06)',
+          color:'#ef4444', fontSize:13, cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          transition:'all .15s',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.background='rgba(239,68,68,0.15)';
+          e.currentTarget.style.borderColor='rgba(239,68,68,0.5)';
+          e.currentTarget.style.transform='scale(1.1)';
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.background='rgba(239,68,68,0.06)';
+          e.currentTarget.style.borderColor='rgba(239,68,68,0.25)';
+          e.currentTarget.style.transform='scale(1)';
+        }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
     </div>
   );
 };
@@ -175,8 +220,16 @@ const Notifications = () => {
   }, []);
 
   const markRead    = id  => { const n=notifs.map(x=>x.id===id?{...x,read:true}:x); setNotifs(n); saveNotifs(n); };
-  const markAllRead = ()  => { const n=notifs.map(x=>({...x,read:true})); setNotifs(n); saveNotifs(n); };
-  const deleteNotif = id  => { const n=notifs.filter(x=>x.id!==id); setNotifs(n); saveNotifs(n); };
+  const markAllRead = () => {
+    const n = notifs.map(x => ({...x, read:true}));
+    setNotifs(n); saveNotifs(n); syncNotifsDB(n);
+  };
+  const deleteNotif = id => {
+    const n = notifs.filter(x => x.id !== id);
+    setNotifs(n); saveNotifs(n);
+    const userEmail = getUserEmail();
+    if (userEmail) fetch(`/api/notifications/item/${id}`, { method:'DELETE' }).catch(()=>{});
+  };
   const clearAll = () => {
     saveNotifs([]); setNotifs([]);
     // Keep notifs_seeded flag — so clearing does NOT bring back the seed notifications

@@ -4,16 +4,37 @@ const getWallet = () => {
   try { return JSON.parse(localStorage.getItem("wallet") || '{"USDT":10000}'); }
   catch { return { USDT: 10000 }; }
 };
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+const syncWalletDB = (w) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/wallet', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, balances: w }) }).catch(()=>{});
+};
+
+const syncTxnsDB = (t) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns: t }) }).catch(()=>{});
+};
+
 const saveWallet = (w) => {
   localStorage.setItem("wallet", JSON.stringify(w));
   window.dispatchEvent(new Event("walletUpdate"));
+  syncWalletDB(w);
 };
 
 const getTxns = () => {
   try { return JSON.parse(localStorage.getItem("wallet_txns") || "[]"); }
   catch { return []; }
 };
-const saveTxns = (t) => localStorage.setItem("wallet_txns", JSON.stringify(t));
+const saveTxns = (t) => {
+  localStorage.setItem("wallet_txns", JSON.stringify(t));
+  syncTxnsDB(t);
+};
 
 const QUICK_AMOUNTS = [100, 500, 1000, 5000, 10000, 25000];
 
@@ -25,9 +46,28 @@ const Wallet = () => {
   const [msg,    setMsg]        = useState(null);    // { text, ok }
 
   useEffect(() => {
-    const sync = () => setWallet(getWallet());
+    const sync = () => { setWallet(getWallet()); setTxns(getTxns()); };
     window.addEventListener("walletUpdate", sync);
     return () => window.removeEventListener("walletUpdate", sync);
+  }, []);
+
+  /* Load wallet + txns from MongoDB on mount — cross-device sync */
+  useEffect(() => {
+    const userEmail = getUserEmail(); if (!userEmail) return;
+    Promise.all([
+      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+    ]).then(([wRes, tRes]) => {
+      if (wRes.balances) {
+        localStorage.setItem('wallet', JSON.stringify(wRes.balances));
+        setWallet(wRes.balances);
+        window.dispatchEvent(new Event('walletUpdate'));
+      }
+      if (tRes.txns?.length > 0) {
+        localStorage.setItem('wallet_txns', JSON.stringify(tRes.txns));
+        setTxns(tRes.txns);
+      }
+    }).catch(() => {});
   }, []);
 
   const showMsg = (text, ok = true) => {

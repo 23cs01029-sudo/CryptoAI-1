@@ -5,6 +5,21 @@ const getPositions = () => { try { return JSON.parse(localStorage.getItem('posit
 const getSessions = () => { try { return JSON.parse(localStorage.getItem('ai_chat_sessions') || '[]'); } catch { return []; } };
 const saveSessions = (s) => localStorage.setItem('ai_chat_sessions', JSON.stringify(s));
 
+/* ─── Backend sync helpers ───────────────────────────────────── */
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+const syncSessions = (sessions) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/chat/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userEmail, sessions }),
+  }).catch(() => {});
+};
+
 const ALL_COINS = [
   {symbol:'BTCUSDT',short:'BTC'},{symbol:'ETHUSDT',short:'ETH'},
   {symbol:'SOLUSDT',short:'SOL'},{symbol:'BNBUSDT',short:'BNB'},
@@ -63,19 +78,20 @@ const Bubble = ({ msg }) => {
 };
 
 const AIChat = () => {
-  const [sessions, setSessions]     = useState(getSessions);
-  const [activeId, setActiveId]     = useState(null);
-  const [input, setInput]           = useState('');
-  const [loading, setLoading]       = useState(false);
+  const [sessions, setSessions]       = useState(getSessions);
+  const [activeId, setActiveId]       = useState(null);
+  const [input, setInput]             = useState('');
+  const [loading, setLoading]         = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [showAgents, setShowAgents] = useState(false);
+  const [showAgents, setShowAgents]   = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
-  const [titleInput, setTitleInput] = useState('');
-  const [prices, setPrices]         = useState({});
-  const endRef    = useRef(null);
-  const inputRef  = useRef(null);
-  const wsRef     = useRef(null);
-  const titleRef  = useRef(null);
+  const [titleInput, setTitleInput]   = useState('');
+  const [prices, setPrices]           = useState({});
+  const [syncing, setSyncing]         = useState(false);
+  const endRef   = useRef(null);
+  const inputRef = useRef(null);
+  const wsRef    = useRef(null);
+  const titleRef = useRef(null);
 
   const active = sessions.find(s => s.id === activeId);
 
@@ -90,22 +106,58 @@ const AIChat = () => {
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({behavior:'smooth'}); }, [active?.messages]);
-
-  /* Focus title input when editing */
   useEffect(() => { if (editingTitle) titleRef.current?.focus(); }, [editingTitle]);
 
   const newSession = useCallback(() => {
     const id = Date.now().toString();
     const s = { id, title:'New conversation', messages:[], createdAt:new Date().toISOString() };
-    setSessions(prev => { const next=[s,...prev]; saveSessions(next); return next; });
+    setSessions(prev => {
+      const next = [s, ...prev];
+      saveSessions(next);
+      syncSessions(next);
+      return next;
+    });
     setActiveId(id);
     setShowHistory(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
+  /* Load from MongoDB on mount */
   useEffect(() => {
-    if (sessions.length === 0) newSession();
-    else setActiveId(sessions[0].id);
+    const userEmail = getUserEmail();
+    if (userEmail) {
+      // Load wallet + positions from MongoDB so AI chat has fresh portfolio context
+      Promise.all([
+        fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      ]).then(([wRes, pRes]) => {
+        if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); window.dispatchEvent(new Event('walletUpdate')); }
+        if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); }
+      }).catch(() => {});
+
+      setSyncing(true);
+      fetch(`/api/chat/sessions/${encodeURIComponent(userEmail)}`)
+        .then(r => r.json())
+        .then(data => {
+          setSyncing(false);
+          if (data.sessions?.length > 0) {
+            setSessions(data.sessions);
+            saveSessions(data.sessions);
+            setActiveId(data.sessions[0].id);
+          } else {
+            if (sessions.length === 0) newSession();
+            else { setActiveId(sessions[0].id); syncSessions(sessions); }
+          }
+        })
+        .catch(() => {
+          setSyncing(false);
+          if (sessions.length === 0) newSession();
+          else setActiveId(sessions[0].id);
+        });
+    } else {
+      if (sessions.length === 0) newSession();
+      else setActiveId(sessions[0].id);
+    }
   }, []); // eslint-disable-line
 
   const delSession = (id, e) => {
@@ -113,6 +165,7 @@ const AIChat = () => {
     setSessions(prev => {
       const next = prev.filter(s => s.id !== id);
       saveSessions(next);
+      syncSessions(next);
       if (activeId === id) {
         if (next.length > 0) setActiveId(next[0].id);
         else setTimeout(newSession, 50);
@@ -121,10 +174,7 @@ const AIChat = () => {
     });
   };
 
-  const startRename = () => {
-    setTitleInput(active?.title || '');
-    setEditingTitle(true);
-  };
+  const startRename = () => { setTitleInput(active?.title || ''); setEditingTitle(true); };
 
   const commitRename = () => {
     const t = titleInput.trim();
@@ -132,6 +182,7 @@ const AIChat = () => {
       setSessions(prev => {
         const next = prev.map(s => s.id === activeId ? {...s, title: t} : s);
         saveSessions(next);
+        syncSessions(next);
         return next;
       });
     }
@@ -159,6 +210,16 @@ User's live portfolio:
 Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Reference actual portfolio data. Use **bold** for numbers. Use ## for sections. Add risk disclaimer on trade advice.`;
   };
 
+  const saveAndSync = (prev, sid, newMsg) => {
+    const next = prev.map(s => {
+      if (s.id !== sid) return s;
+      return {...s, messages:[...(s.messages||[]).filter(m=>!m.typing), newMsg]};
+    });
+    saveSessions(next);
+    syncSessions(next);
+    return next;
+  };
+
   const send = async (txt) => {
     const content = (txt||input).trim();
     if (!content||loading) return;
@@ -168,7 +229,17 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
     const userMsg = { id:Date.now(), role:'user', content, time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) };
     const typMsg  = { id:'typing', role:'assistant', typing:true };
 
-    setSessions(prev => { const next=prev.map(s=>{ if(s.id!==sid) return s; const first=(s.messages||[]).length===0; return {...s, title:first?content.slice(0,45):s.title, messages:[...(s.messages||[]),userMsg,typMsg]}; }); saveSessions(next.map(s=>({...s,messages:(s.messages||[]).filter(m=>!m.typing)}))); return next; });
+    setSessions(prev => {
+      const next = prev.map(s => {
+        if (s.id!==sid) return s;
+        const first = (s.messages||[]).length===0;
+        return {...s, title:first?content.slice(0,45):s.title, messages:[...(s.messages||[]),userMsg,typMsg]};
+      });
+      const clean = next.map(s=>({...s,messages:(s.messages||[]).filter(m=>!m.typing)}));
+      saveSessions(clean);
+      syncSessions(clean);
+      return next;
+    });
     setLoading(true);
 
     const history = prevMsgs.filter(m=>!m.typing).map(m=>({role:m.role,content:m.content}));
@@ -177,7 +248,7 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
       const data = await res.json();
       const reply = data.content?.[0]?.text||'Sorry, I could not process that.';
       const aiMsg = { id:Date.now()+1, role:'assistant', content:reply, time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) };
-      setSessions(prev=>{ const next=prev.map(s=>{ if(s.id!==sid) return s; return {...s,messages:[...(s.messages||[]).filter(m=>!m.typing),aiMsg]}; }); saveSessions(next); return next; });
+      setSessions(prev => saveAndSync(prev, sid, aiMsg));
     } catch {
       const lower = content.toLowerCase();
       const w = getWallet();
@@ -194,7 +265,7 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         reply=`## DeFi vs CeFi\n\n**DeFi** — Smart contracts, you control keys. Examples: Uniswap, Aave. Risks: bugs, impermanent loss.\n**CeFi** — Exchanges like Binance. Custodial, easier UX. Risks: hacks, regulation.\n\n**Best practice:** CeFi for active trading, DeFi for earning yield on idle assets.`;
       }
       const aiMsg={id:Date.now()+1,role:'assistant',content:reply,time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
-      setSessions(prev=>{ const next=prev.map(s=>{ if(s.id!==sid) return s; return {...s,messages:[...(s.messages||[]).filter(m=>!m.typing),aiMsg]}; }); saveSessions(next); return next; });
+      setSessions(prev => saveAndSync(prev, sid, aiMsg));
     }
     setLoading(false);
     setTimeout(()=>inputRef.current?.focus(),100);
@@ -223,76 +294,51 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
         .sg:hover{border-color:#6366f1;color:#6366f1;background:#f0f4ff;}
         .ic-btn{display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;transition:all .15s;flex-shrink:0;}
         .ic-btn:hover{background:rgba(99,102,241,0.08)!important;}
-
-        /* History panel */
         .hist-panel{width:0;flex-shrink:0;overflow:hidden;transition:width .25s cubic-bezier(.22,1,.36,1);background:white;border-left:1px solid #f1f5f9;}
         .hist-panel.open{width:280px;}
         .sess-row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .12s;margin-bottom:3px;}
         .sess-row:hover{background:#f8fafc;}
         .sess-row.active{background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.15);}
-
         @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
         @keyframes bounce{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
       `}</style>
 
       <div className="aic">
-        {/* ── Header ── */}
+        {/* Header */}
         <div style={{display:'flex',alignItems:'center',gap:10,padding:'11px 16px',background:'white',borderBottom:'1px solid #f1f5f9',flexShrink:0}}>
-
-          {/* AI avatar */}
           <div style={{width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#818cf8)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:800,color:'white',boxShadow:'0 2px 10px rgba(99,102,241,0.25)',flexShrink:0}}>AI</div>
+          <button onClick={newSession} title="New conversation" className="ic-btn"
+            style={{width:30,height:30,borderRadius:8,background:'#f1f5f9',border:'1.5px solid #e2e8f0',fontSize:18,fontWeight:300,color:'#6366f1',lineHeight:1}}>+</button>
 
-          {/* New conversation button — minus/plus style */}
-          <button
-            onClick={newSession}
-            title="New conversation"
-            className="ic-btn"
-            style={{width:30,height:30,borderRadius:8,background:'#f1f5f9',border:'1.5px solid #e2e8f0',fontSize:18,fontWeight:300,color:'#6366f1',lineHeight:1}}>
-            +
-          </button>
-
-          {/* Editable title */}
           <div style={{flex:1,minWidth:0}}>
             {editingTitle ? (
-              <input
-                ref={titleRef}
-                value={titleInput}
-                onChange={e=>setTitleInput(e.target.value)}
+              <input ref={titleRef} value={titleInput} onChange={e=>setTitleInput(e.target.value)}
                 onBlur={commitRename}
-                onKeyDown={e=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape'){setEditingTitle(false);} }}
-                style={{width:'100%',fontSize:14,fontWeight:600,color:'#0f172a',fontFamily:"'Sora',sans-serif",background:'transparent',border:'none',borderBottom:'1.5px solid #6366f1',outline:'none',padding:'2px 0'}}
-              />
+                onKeyDown={e=>{if(e.key==='Enter')commitRename();if(e.key==='Escape')setEditingTitle(false);}}
+                style={{width:'100%',fontSize:14,fontWeight:600,color:'#0f172a',fontFamily:"'Sora',sans-serif",background:'transparent',border:'none',borderBottom:'1.5px solid #6366f1',outline:'none',padding:'2px 0'}}/>
             ) : (
-              <div
-                onClick={startRename}
-                title="Click to rename"
-                style={{display:'flex',alignItems:'center',gap:6,cursor:'text',group:true}}>
+              <div onClick={startRename} title="Click to rename" style={{display:'flex',alignItems:'center',gap:6,cursor:'text'}}>
                 <div style={{fontSize:14,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif",whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:180}}>
                   {active?.title||'New conversation'}
                 </div>
-                {/* pencil icon — show on hover via CSS isn't easy inline, so always show faintly */}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="2" strokeLinecap="round" style={{flexShrink:0}}>
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                 </svg>
               </div>
             )}
-            {/* Agent status */}
             <div style={{display:'flex',alignItems:'center',gap:5,marginTop:1}}>
               <div style={{width:6,height:6,borderRadius:'50%',background:'#22c55e'}}/>
-              <span
-                style={{fontSize:11,color:'#94a3b8',cursor:'pointer',textDecoration:'underline',textDecorationStyle:'dotted',textUnderlineOffset:2}}
-                onClick={()=>setShowAgents(v=>!v)}
-                title="Click to see agent details">
-                4 agents active
-              </span>
+              <span style={{fontSize:11,color:'#94a3b8',cursor:'pointer',textDecoration:'underline',textDecorationStyle:'dotted',textUnderlineOffset:2}}
+                onClick={()=>setShowAgents(v=>!v)}>4 agents active</span>
               <span style={{fontSize:11,color:'#94a3b8'}}>· {totalMsgs} messages</span>
+              {syncing&&<span style={{fontSize:10,color:'#6366f1',animation:'pulse 1s ease infinite'}}>↑ syncing…</span>}
             </div>
           </div>
 
-          {/* Live price tickers */}
           <div style={{display:'flex',gap:14,flexShrink:0}}>
             {['BTCUSDT','ETHUSDT','SOLUSDT'].filter(s=>prices[s]).map(sym=>{
               const short=ALL_COINS.find(c=>c.symbol===sym)?.short;
@@ -304,25 +350,15 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
             })}
           </div>
 
-          {/* History button */}
-          <button
-            onClick={()=>setShowHistory(v=>!v)}
-            title="Chat history"
-            className="ic-btn"
-            style={{
-              width:34,height:34,borderRadius:10,
-              background:showHistory?'rgba(99,102,241,0.1)':'#f1f5f9',
-              border:`1.5px solid ${showHistory?'rgba(99,102,241,0.3)':'#e2e8f0'}`,
-              color:showHistory?'#6366f1':'#64748b',
-            }}>
+          <button onClick={()=>setShowHistory(v=>!v)} title="Chat history" className="ic-btn"
+            style={{width:34,height:34,borderRadius:10,background:showHistory?'rgba(99,102,241,0.1)':'#f1f5f9',border:`1.5px solid ${showHistory?'rgba(99,102,241,0.3)':'#e2e8f0'}`,color:showHistory?'#6366f1':'#64748b'}}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
             </svg>
           </button>
         </div>
 
-        {/* Agent info tooltip */}
-        {showAgents && (
+        {showAgents&&(
           <div style={{background:'white',borderBottom:'1px solid #f1f5f9',padding:'12px 16px',animation:'fadeIn .15s ease'}}>
             <div style={{fontSize:11,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:10}}>Active agents</div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:8}}>
@@ -340,14 +376,11 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
           </div>
         )}
 
-        {/* Body = messages + history panel */}
         <div className="aic-body">
-
-          {/* Main chat */}
           <div className="aic-main">
             <div className="aic-msgs">
               <div className="aic-wrap">
-                {!active||active.messages.length===0 ? (
+                {!active||active.messages.length===0?(
                   <div style={{display:'flex',flexDirection:'column',alignItems:'center',textAlign:'center',paddingTop:32}}>
                     <div style={{width:68,height:68,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#818cf8)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,fontWeight:800,color:'white',marginBottom:14,boxShadow:'0 8px 32px rgba(99,102,241,0.25)'}}>AI</div>
                     <div style={{fontSize:22,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif",marginBottom:6}}>Hello, Trader 👋</div>
@@ -356,14 +389,11 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
                       {SUGGESTED.map((s,i)=><button key={i} className="sg" onClick={()=>send(s.text)}><span style={{marginRight:8}}>{s.icon}</span>{s.text}</button>)}
                     </div>
                   </div>
-                ):(
-                  active.messages.map(msg=><Bubble key={msg.id} msg={msg}/>)
-                )}
+                ):(active.messages.map(msg=><Bubble key={msg.id} msg={msg}/>))}
                 <div ref={endRef}/>
               </div>
             </div>
 
-            {/* Input */}
             <div className="aic-footer">
               <div className="aic-wrap">
                 {totalMsgs===2&&(
@@ -383,10 +413,8 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
                     placeholder="Ask about crypto, request a signal, analyze your portfolio…"
                     rows={1} disabled={loading}/>
                   <button className="send-btn" onClick={()=>send()} disabled={!input.trim()||loading}>
-                    {loading
-                      ? <div style={{width:14,height:14,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'white',borderRadius:'50%',animation:'spin .7s linear infinite'}}/>
-                      : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    }
+                    {loading?<div style={{width:14,height:14,border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'white',borderRadius:'50%',animation:'spin .7s linear infinite'}}/>
+                    :<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>}
                   </button>
                 </div>
                 <div style={{textAlign:'center',fontSize:10,color:'#cbd5e1',marginTop:8}}>CryptoAI · Powered by Claude · Not financial advice</div>
@@ -394,14 +422,16 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
             </div>
           </div>
 
-          {/* ── History side panel ── */}
           <div className={`hist-panel${showHistory?' open':''}`}>
-            {showHistory && (
+            {showHistory&&(
               <div style={{width:280,height:'100%',display:'flex',flexDirection:'column',animation:'fadeIn .15s ease'}}>
                 <div style={{padding:'16px 16px 12px',borderBottom:'1px solid #f1f5f9',flexShrink:0}}>
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
                     <div style={{fontSize:14,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif"}}>Chat History</div>
-                    <button onClick={()=>setShowHistory(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:16,padding:4,borderRadius:6}}>✕</button>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      {syncing&&<span style={{fontSize:10,color:'#6366f1',animation:'pulse 1s ease infinite'}}>syncing…</span>}
+                      <button onClick={()=>setShowHistory(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:16,padding:4,borderRadius:6}}>✕</button>
+                    </div>
                   </div>
                   <button onClick={newSession}
                     style={{width:'100%',padding:'9px 12px',borderRadius:10,border:'1.5px dashed #e2e8f0',background:'transparent',color:'#6366f1',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:"'DM Sans',sans-serif",display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}
@@ -410,18 +440,15 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
                     <span style={{fontSize:16}}>+</span> New conversation
                   </button>
                 </div>
-
                 <div style={{flex:1,overflowY:'auto',padding:'10px 10px'}}>
-                  {sessions.length === 0 ? (
+                  {sessions.length===0?(
                     <div style={{textAlign:'center',color:'#94a3b8',fontSize:12,padding:'20px 0'}}>No conversations yet</div>
-                  ) : sessions.map(s => (
-                    <div key={s.id}
-                      className={`sess-row${s.id===activeId?' active':''}`}
-                      onClick={()=>{ setActiveId(s.id); }}>
+                  ):sessions.map(s=>(
+                    <div key={s.id} className={`sess-row${s.id===activeId?' active':''}`} onClick={()=>setActiveId(s.id)}>
                       <div style={{width:30,height:30,borderRadius:8,flexShrink:0,background:s.id===activeId?'rgba(99,102,241,0.12)':'#f1f5f9',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>💬</div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:12.5,fontWeight:s.id===activeId?600:400,color:s.id===activeId?'#6366f1':'#0f172a',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{s.title}</div>
-                        <div style={{fontSize:10,color:'#94a3b8',marginTop:1}}>{s.messages?.length||0} messages</div>
+                        <div style={{fontSize:10,color:'#94a3b8',marginTop:1}}>{s.messages?.filter(m=>!m.typing).length||0} messages</div>
                       </div>
                       <button onClick={e=>delSession(s.id,e)}
                         style={{background:'none',border:'none',cursor:'pointer',color:'#e2e8f0',fontSize:13,padding:'2px 4px',borderRadius:4,flexShrink:0}}
@@ -430,15 +457,13 @@ Rules: For trading signals include Action/Entry/TP/SL/Confidence/Reasoning. Refe
                     </div>
                   ))}
                 </div>
-
-                {/* Portfolio snapshot at bottom */}
                 <div style={{padding:'12px 16px',borderTop:'1px solid #f1f5f9',background:'#f8fafc',flexShrink:0}}>
                   <div style={{fontSize:10,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.4px',marginBottom:6}}>Your Portfolio</div>
-                  <div style={{fontSize:14,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif"}}>
-                    ${(getWallet().USDT||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} USDT
-                  </div>
-                  <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>
-                    {getPositions().filter(p=>p.status!=='CLOSED').length} open positions
+                  <div style={{fontSize:14,fontWeight:700,color:'#0f172a',fontFamily:"'Sora',sans-serif"}}>${(getWallet().USDT||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} USDT</div>
+                  <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{getPositions().filter(p=>p.status!=='CLOSED').length} open positions</div>
+                  <div style={{fontSize:10,color:'#6366f1',marginTop:4,display:'flex',alignItems:'center',gap:4}}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                    Synced to cloud
                   </div>
                 </div>
               </div>

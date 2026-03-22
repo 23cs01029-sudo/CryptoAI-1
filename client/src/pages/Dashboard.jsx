@@ -9,6 +9,7 @@ const getWallet = () => {
 const saveWallet = (w) => {
   localStorage.setItem('wallet', JSON.stringify(w));
   window.dispatchEvent(new Event('walletUpdate'));
+  syncWallet(w);
 };
 const getWatchlist = () => {
   try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); }
@@ -16,12 +17,36 @@ const getWatchlist = () => {
 };
 
 /* ─── Backend sync helper ────────────────────────────────────── */
+/* ─── Backend sync helpers ───────────────────────────────────── */
 const getUserEmail = () => {
   try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
   catch { return null; }
 };
 
-// Save trade to MongoDB
+const syncWallet = (wallet) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/wallet', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, balances: wallet }),
+  }).catch(()=>{});
+};
+
+const syncPositions = (positions) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/positions', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, positions }),
+  }).catch(()=>{});
+};
+
+const syncTxns = (txns) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns }),
+  }).catch(()=>{});
+};
+
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
   fetch('/api/trades', {
@@ -30,7 +55,6 @@ const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   }).catch(()=>{});
 };
 
-// Save watchlist to MongoDB
 const syncWatchlist = (watchlist) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
   fetch('/api/watchlist', {
@@ -46,25 +70,18 @@ const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
 
 const pushNotif = (type, title, body, meta={}) => {
   try {
-    // 1. Save to localStorage immediately
     const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
     const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
     localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
     window.dispatchEvent(new Event('notifsUpdated'));
-
-    // 2. Email + MongoDB for trade/signal only
     if (type === 'trade' || type === 'signal') {
       const userEmail = getUserEmail();
       if (userEmail) {
-        // EmailJS — works without backend
         if (window.emailjs) {
-          window.emailjs.send(
-            EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
+          window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
             { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
-            EMAILJS_PUBLIC_KEY
-          ).catch(()=>{});
+            EMAILJS_PUBLIC_KEY).catch(()=>{});
         }
-        // MongoDB via backend
         fetch('/api/notifications', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ userEmail, type, title, body, meta }),
@@ -73,7 +90,6 @@ const pushNotif = (type, title, body, meta={}) => {
     }
   } catch {}
 };
-
 
 /* ─── AnimatedList ───────────────────────────────────────────── */
 const AnimatedItem = ({ children, index, onMouseEnter, onClick }) => {
@@ -777,6 +793,22 @@ const Dashboard = () => {
     return()=>window.removeEventListener('walletUpdate',sync);
   },[]);
 
+  /* Load all data from MongoDB on mount — enables cross-device sync */
+  useEffect(()=>{
+    const userEmail = getUserEmail(); if (!userEmail) return;
+    Promise.all([
+      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+    ]).then(([wRes, pRes, tRes, wlRes])=>{
+      if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); setWallet(wRes.balances); window.dispatchEvent(new Event('walletUpdate')); }
+      if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); setPositions(pRes.positions); }
+      if (tRes.txns?.length > 0)      { localStorage.setItem('wallet_txns', JSON.stringify(tRes.txns)); }
+      if (wlRes.symbols?.length > 0)  { localStorage.setItem('watchlist', JSON.stringify(wlRes.symbols)); setWatchlist(wlRes.symbols); }
+    }).catch(()=>{});
+  },[]);
+
   // watchlist
   const [watchlist, setWatchlist] = useState(getWatchlist);
 
@@ -958,6 +990,7 @@ const Dashboard = () => {
     );
     setPositions(next);
     localStorage.setItem('positions', JSON.stringify(next));
+    syncPositions(next);
 
     showToast(`Position closed — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`, pnl>=0);
     syncTrade('CLOSE', pos.coin, pos.symbol, pos.qty, curPrice, parseFloat(pnl.toFixed(4)));
@@ -1088,6 +1121,7 @@ You must respond with ONLY valid JSON, no markdown, no explanation outside the J
       const next=[pos,...positions];
       setPositions(next);
       localStorage.setItem('positions',JSON.stringify(next));
+      syncPositions(next);
     }
     setTradeAmt(''); setTradeQty('');
     setDetailTab('positions');

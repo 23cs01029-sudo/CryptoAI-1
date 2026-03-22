@@ -172,6 +172,27 @@ const Analytics = () => {
     return () => { window.removeEventListener('walletUpdate', sync); window.removeEventListener('focus', sync); };
   }, []);
 
+  /* Load wallet + positions + txns from MongoDB on mount — cross-device sync */
+  useEffect(() => {
+    try {
+      const userEmail = JSON.parse(localStorage.getItem('user') || '{}').email;
+      if (!userEmail) return;
+      Promise.all([
+        fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+        fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      ]).then(([wRes, pRes, tRes]) => {
+        let changed = false;
+        if (wRes.balances)              { localStorage.setItem('wallet',      JSON.stringify(wRes.balances));    changed = true; }
+        if (pRes.positions?.length > 0) { localStorage.setItem('positions',   JSON.stringify(pRes.positions));   changed = true; }
+        if (tRes.txns?.length > 0)      { localStorage.setItem('wallet_txns', JSON.stringify(tRes.txns));        changed = true; }
+        if (changed) {
+          window.dispatchEvent(new Event('walletUpdate')); // triggers setTick → re-render
+        }
+      }).catch(() => {});
+    } catch {}
+  }, []);
+
   /* ── Derived analytics (reactive to walletUpdate via tick) ── */
   const positions = getPositions();
   const wallet    = getWallet();

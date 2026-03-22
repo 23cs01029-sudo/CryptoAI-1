@@ -9,6 +9,7 @@ const getWallet = () => {
 const saveWallet = (w) => {
   localStorage.setItem('wallet', JSON.stringify(w));
   window.dispatchEvent(new Event('walletUpdate'));
+  syncWallet(w);
 };
 const getPositions = () => {
   try { return JSON.parse(localStorage.getItem('positions') || '[]'); }
@@ -19,28 +20,79 @@ const getTxns = () => {
   catch { return []; }
 };
 
-/* ─── Notification helpers (write directly to localStorage) ─── */
+/* ─── Backend sync helpers ───────────────────────────────────── */
+const getUserEmail = () => {
+  try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
+  catch { return null; }
+};
+
+const syncWallet = (wallet) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/wallet', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, balances: wallet }),
+  }).catch(()=>{});
+};
+
+const syncPositions = (positions) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/positions', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, positions }),
+  }).catch(()=>{});
+};
+
+const syncTxns = (txns) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns }),
+  }).catch(()=>{});
+};
+
+const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/trades', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, type, coin, symbol, qty, price, pnl }),
+  }).catch(()=>{});
+};
+
+const syncWatchlist = (watchlist) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/watchlist', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, symbols: watchlist }),
+  }).catch(()=>{});
+};
+
+/* ─── Notification helper ────────────────────────────────────── */
+const EMAILJS_SERVICE_ID     = "service_7eo8n3g";
+const EMAILJS_TEMPLATE_NOTIF = "template_xpa7txr";
+const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
+
 const pushNotif = (type, title, body, meta={}) => {
   try {
-    // Save to localStorage immediately (works offline too)
     const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
     const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
-    const next = [n, ...existing].slice(0, 100);
-    localStorage.setItem('notifications', JSON.stringify(next));
+    localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
     window.dispatchEvent(new Event('notifsUpdated'));
-    // Also save to backend DB + trigger email
-    const user = JSON.parse(localStorage.getItem('user')||'{}');
-    const userEmail = user.email;
-    if (userEmail) {
-      fetch('/api/notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userEmail, type, title, body, meta }),
-      }).catch(() => {}); // silent fail if server is down
+    if (type === 'trade' || type === 'signal') {
+      const userEmail = getUserEmail();
+      if (userEmail) {
+        if (window.emailjs) {
+          window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
+            { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
+            EMAILJS_PUBLIC_KEY).catch(()=>{});
+        }
+        fetch('/api/notifications', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ userEmail, type, title, body, meta }),
+        }).catch(()=>{});
+      }
     }
   } catch {}
 };
-
 
 const ALL_COINS = [
   {symbol:'BTCUSDT', name:'Bitcoin',   short:'BTC',  color:'#f7931a',bg:'rgba(247,147,26,0.12)'},
@@ -480,6 +532,22 @@ const Trades = () => {
     return()=>{ window.removeEventListener('walletUpdate',sync); window.removeEventListener('focus',sync); };
   },[]);
 
+  /* Load ALL data from MongoDB on mount — cross-device sync */
+  useEffect(()=>{
+    const userEmail = getUserEmail(); if (!userEmail) return;
+    Promise.all([
+      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/txns/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+    ]).then(([wRes, pRes, tRes, wlRes])=>{
+      if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); setWallet(wRes.balances); window.dispatchEvent(new Event('walletUpdate')); }
+      if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); setPositions(pRes.positions); }
+      if (tRes.txns?.length > 0)      { localStorage.setItem('wallet_txns', JSON.stringify(tRes.txns)); setTxns(tRes.txns); }
+      if (wlRes.symbols?.length > 0)  { localStorage.setItem('watchlist', JSON.stringify(wlRes.symbols)); setWatchlist(wlRes.symbols); }
+    }).catch(()=>{});
+  },[]);
+
   /* Fetch prices via REST immediately, then WebSocket keeps them live */
   useEffect(()=>{
     const symbols = ALL_COINS.map(c=>`"${c.symbol}"`).join(',');
@@ -569,9 +637,24 @@ const Trades = () => {
     setWatchlist(prev=>{
       const next=prev.includes(symbol)?prev.filter(s=>s!==symbol):[...prev,symbol];
       localStorage.setItem('watchlist',JSON.stringify(next));
+      syncWatchlist(next); // sync to MongoDB
       return next;
     });
   };
+
+  /* Load watchlist from MongoDB on mount */
+  useEffect(() => {
+    const userEmail = getUserEmail(); if (!userEmail) return;
+    fetch(`/api/watchlist/${userEmail}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.symbols?.length > 0) {
+          setWatchlist(data.symbols);
+          localStorage.setItem('watchlist', JSON.stringify(data.symbols));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   /* Amount <-> Qty */
   const selPrice = selected
@@ -594,8 +677,10 @@ const Trades = () => {
       saveWallet(w); setWallet({...w});
       const t=getTxns(); t.unshift({id:Date.now(),type:'BUY',amount:cost,note:`BUY ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(t)); setTxns(t);
+      syncTxns(t);
       showToast(`Bought ${qty.toFixed(6)} ${selected.short} for $${cost.toFixed(2)}`);
       pushNotif('trade', `BUY ${selected.short}/USDT`, `Bought ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Total $${cost.toFixed(2)}`, {coin:selected.short, type:'BUY'});
+      syncTrade('BUY', selected.short, selected.symbol, qty, price);
     } else {
       const owned=w[selected.short]||0;
       if(owned<=0){showToast(`You don't own any ${selected.short}`,false);return;}
@@ -607,8 +692,10 @@ const Trades = () => {
       saveWallet(w); setWallet({...w});
       const t=getTxns(); t.unshift({id:Date.now(),type:'SELL',amount:proceeds,note:`SELL ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)}`,time:new Date().toLocaleString()});
       localStorage.setItem('wallet_txns',JSON.stringify(t)); setTxns(t);
+      syncTxns(t);
       showToast(`Sold ${qty.toFixed(6)} ${selected.short} for $${proceeds.toFixed(2)}`);
       pushNotif('trade', `SELL ${selected.short}/USDT`, `Sold ${qty.toFixed(6)} ${selected.short} @ $${price.toFixed(2)} · Received $${proceeds.toFixed(2)}`, {coin:selected.short, type:'SELL'});
+      syncTrade('SELL', selected.short, selected.symbol, qty, price);
     }
     // Only create a position record for BUY trades
     // SELL is a spot disposal — wallet transaction only, not a tracked open position
@@ -619,6 +706,7 @@ const Trades = () => {
         pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
       const next=[pos,...positions];
       setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+      syncPositions(next);
     }
     setTradeAmt(''); setTradeQty(''); setDetailTab('positions');
   };
@@ -643,10 +731,13 @@ const Trades = () => {
       note:`CLOSE ${pos.type} ${pos.qty} ${pos.coin} @ $${cur.toFixed(2)} — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`,
       time:new Date().toLocaleString()});
     localStorage.setItem('wallet_txns',JSON.stringify(t)); setTxns(t);
+    syncTxns(t);
     const next=positions.map(p=>p.id===pos.id
       ?{...p,status:'CLOSED',closePrice:cur,closePnl:parseFloat(pnl.toFixed(4)),closeTime:new Date().toLocaleString()}:p);
     setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+    syncPositions(next);
     showToast(`Closed — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`, pnl>=0);
+    syncTrade('CLOSE', pos.coin, pos.symbol, pos.qty, cur, parseFloat(pnl.toFixed(4)));
   };
 
   /* AI Signal */

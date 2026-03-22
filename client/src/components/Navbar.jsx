@@ -59,17 +59,60 @@ const Navbar = ({ notifCount = 0 }) => {
       setNotifs(n);
       setUnread(n.filter(x => !x.read).length);
     };
-    // Also sync when notifications page saves new notifs
     window.addEventListener("walletUpdate",  sync);
     window.addEventListener("storage",       sync);
     window.addEventListener("notifUpdate",   sync);
-    window.addEventListener("notifsUpdated", sync); // ← correct event name
+    window.addEventListener("notifsUpdated", sync);
     return () => {
       window.removeEventListener("walletUpdate",  sync);
       window.removeEventListener("storage",       sync);
       window.removeEventListener("notifUpdate",   sync);
       window.removeEventListener("notifsUpdated", sync);
     };
+  }, []);
+
+  /* Sync wallet + notifications from MongoDB on mount — works across devices */
+  useEffect(() => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const userEmail = user.email;
+      if (!userEmail) return;
+      // Wallet sync
+      fetch(`/api/wallet/${userEmail}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.balances) {
+            localStorage.setItem('wallet', JSON.stringify(data.balances));
+            setWallet(data.balances);
+            window.dispatchEvent(new Event('walletUpdate'));
+          }
+        }).catch(() => {});
+      // Notifications sync
+      fetch(`/api/notifications/${userEmail}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!Array.isArray(data) || data.length === 0) return;
+          const local  = getNotifs();
+          const remote = data.map(n => ({
+            id:    n._id || n.id,
+            type:  n.type  || 'system',
+            title: n.title || '',
+            body:  n.body  || '',
+            meta:  n.meta  || {},
+            read:  n.read  || false,
+            time:  n.time  || new Date().toISOString(),
+          }));
+          // Merge local + remote, deduplicate by id, sort newest first
+          const merged = [...remote, ...local]
+            .filter((n, i, arr) => arr.findIndex(x => String(x.id) === String(n.id)) === i)
+            .sort((a, b) => new Date(b.time) - new Date(a.time))
+            .slice(0, 100);
+          localStorage.setItem('notifications', JSON.stringify(merged));
+          setNotifs(merged);
+          setUnread(merged.filter(x => !x.read).length);
+        })
+        .catch(() => {});
+    } catch {}
   }, []);
 
   useEffect(() => {

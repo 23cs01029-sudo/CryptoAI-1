@@ -9,12 +9,37 @@ const getWallet = () => {
 const saveWallet = (w) => {
   localStorage.setItem('wallet', JSON.stringify(w));
   window.dispatchEvent(new Event('walletUpdate'));
+  syncWallet(w);
 };
 
 /* ─── Backend sync helpers ───────────────────────────────────── */
 const getUserEmail = () => {
   try { return JSON.parse(localStorage.getItem('user')||'{}').email || null; }
   catch { return null; }
+};
+
+const syncWallet = (wallet) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/wallet', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, balances: wallet }),
+  }).catch(()=>{});
+};
+
+const syncPositions = (positions) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/positions', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, positions }),
+  }).catch(()=>{});
+};
+
+const syncTxns = (txns) => {
+  const userEmail = getUserEmail(); if (!userEmail) return;
+  fetch('/api/txns', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ userEmail, txns }),
+  }).catch(()=>{});
 };
 
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
@@ -40,22 +65,17 @@ const EMAILJS_PUBLIC_KEY     = "RJjsxL_MNFrrHk61S";
 
 const pushNotif = (type, title, body, meta={}) => {
   try {
-    // 1. Save to localStorage immediately
     const existing = JSON.parse(localStorage.getItem('notifications')||'[]');
     const n = { id:Date.now()+Math.random(), type, title, body, meta, read:false, time:new Date().toISOString() };
     localStorage.setItem('notifications', JSON.stringify([n,...existing].slice(0,100)));
     window.dispatchEvent(new Event('notifsUpdated'));
-
-    // 2. Email + MongoDB for trade/signal only
     if (type === 'trade' || type === 'signal') {
       const userEmail = getUserEmail();
       if (userEmail) {
         if (window.emailjs) {
-          window.emailjs.send(
-            EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
+          window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_NOTIF,
             { to_email:userEmail, title, body, type, app_name:'CryptoAI' },
-            EMAILJS_PUBLIC_KEY
-          ).catch(()=>{});
+            EMAILJS_PUBLIC_KEY).catch(()=>{});
         }
         fetch('/api/notifications', {
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -65,7 +85,6 @@ const pushNotif = (type, title, body, meta={}) => {
     }
   } catch {}
 };
-
 
 /* ─── All coins master list ──────────────────────────────────── */
 const ALL_COINS = [
@@ -453,19 +472,18 @@ const Watchlist = () => {
   const [alerts,  setAlerts]  = useState([]);
   const alertIdRef = useRef(0);
 
-  /* Load watchlist from MongoDB on mount — syncs across devices */
+  /* Load ALL data from MongoDB on mount — cross-device sync */
   useEffect(() => {
-    const userEmail = getUserEmail();
-    if (!userEmail) return;
-    fetch(`/api/watchlist/${userEmail}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.symbols?.length > 0) {
-          setWatchlist(data.symbols);
-          localStorage.setItem('watchlist', JSON.stringify(data.symbols));
-        }
-      })
-      .catch(() => {}); // silent fail — localStorage used as fallback
+    const userEmail = getUserEmail(); if (!userEmail) return;
+    Promise.all([
+      fetch(`/api/wallet/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/positions/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+      fetch(`/api/watchlist/${userEmail}`).then(r=>r.json()).catch(()=>({})),
+    ]).then(([wRes, pRes, wlRes])=>{
+      if (wRes.balances)              { localStorage.setItem('wallet', JSON.stringify(wRes.balances)); setWallet(wRes.balances); window.dispatchEvent(new Event('walletUpdate')); }
+      if (pRes.positions?.length > 0) { localStorage.setItem('positions', JSON.stringify(pRes.positions)); setPositions(pRes.positions); }
+      if (wlRes.symbols?.length > 0)  { localStorage.setItem('watchlist', JSON.stringify(wlRes.symbols)); setWatchlist(wlRes.symbols); }
+    }).catch(()=>{});
   }, []);
 
   const location = useLocation();
@@ -761,6 +779,7 @@ const Watchlist = () => {
         pnl:0,current:price,color:selected.color,time:new Date().toLocaleString()};
       const next=[pos,...positions];
       setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+      syncPositions(next);
     }
     setTradeAmt(''); setTradeQty(''); setDetailTab('positions');
   };
@@ -789,6 +808,7 @@ const Watchlist = () => {
       ?{...p,status:'CLOSED',closePrice:curPrice,closePnl:parseFloat(pnl.toFixed(4)),closeTime:new Date().toLocaleString()}
       :p);
     setPositions(next); localStorage.setItem('positions',JSON.stringify(next));
+    syncPositions(next);
     showToast(`Closed — P&L: ${pnl>=0?'+':''}$${pnl.toFixed(4)}`, pnl>=0);
     syncTrade('CLOSE', pos.coin, pos.symbol, pos.qty, curPrice, parseFloat(pnl.toFixed(4)));
   };

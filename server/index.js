@@ -49,10 +49,57 @@ const WatchlistSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-const User      = mongoose.model('User',      UserSchema);
-const Notif     = mongoose.model('Notif',     NotifSchema);
-const Trade     = mongoose.model('Trade',     TradeSchema);
-const Watchlist = mongoose.model('Watchlist', WatchlistSchema);
+const ChatSessionSchema = new mongoose.Schema({
+  userEmail: { type: String, unique: true },
+  sessions:  [mongoose.Schema.Types.Mixed],
+  updatedAt: { type: Date, default: Date.now },
+});
+
+const WalletSchema = new mongoose.Schema({
+  userEmail:  { type: String, unique: true },
+  balances:   { type: Object, default: { USDT: 10000 } }, // { USDT: 9500, BTC: 0.001, ... }
+  updatedAt:  { type: Date, default: Date.now },
+});
+
+const PositionSchema = new mongoose.Schema({
+  userEmail:  String,
+  posId:      Number,   // local id for upsert
+  coin:       String,
+  symbol:     String,
+  type:       String,   // BUY | SELL
+  entry:      Number,
+  qty:        Number,
+  tp:         Number,
+  sl:         Number,
+  status:     { type: String, default: 'OPEN' },
+  pnl:        Number,
+  current:    Number,
+  closePrice: Number,
+  closePnl:   Number,
+  closeTime:  String,
+  color:      String,
+  time:       String,
+  updatedAt:  { type: Date, default: Date.now },
+});
+
+const TxnSchema = new mongoose.Schema({
+  userEmail: String,
+  txnId:     Number,
+  type:      String,   // BUY | SELL | CLOSE | DEPOSIT
+  amount:    Number,
+  note:      String,
+  time:      String,
+  createdAt: { type: Date, default: Date.now },
+});
+
+const User        = mongoose.model('User',        UserSchema);
+const Notif       = mongoose.model('Notif',       NotifSchema);
+const Trade       = mongoose.model('Trade',       TradeSchema);
+const Watchlist   = mongoose.model('Watchlist',   WatchlistSchema);
+const ChatSession = mongoose.model('ChatSession', ChatSessionSchema);
+const Wallet      = mongoose.model('Wallet',      WalletSchema);
+const Position    = mongoose.model('Position',    PositionSchema);
+const Txn         = mongoose.model('Txn',         TxnSchema);
 
 /* ─── Email ───────────────────────────────────────────────────── */
 const transporter = nodemailer.createTransport({
@@ -204,6 +251,38 @@ app.delete('/api/notifications/:email', async (req, res) => {
   res.json({ success: true });
 });
 
+// DELETE /api/notifications/item/:id  — delete single notification
+app.delete('/api/notifications/item/:id', async (req, res) => {
+  try {
+    await Notif.deleteOne({ _id: req.params.id });
+  } catch { /* id may be a local float id, not mongo _id — ignore */ }
+  res.json({ success: true });
+});
+
+// POST /api/notifications/sync  — bulk upsert full notifications array (for mark-all-read)
+app.post('/api/notifications/sync', async (req, res) => {
+  const { userEmail, notifications } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    // Overwrite all notifications for this user
+    await Notif.deleteMany({ userEmail });
+    if (notifications?.length > 0) {
+      await Notif.insertMany(
+        notifications.map(n => ({
+          userEmail,
+          type:  n.type  || 'system',
+          title: n.title || '',
+          body:  n.body  || '',
+          meta:  n.meta  || {},
+          read:  n.read  || false,
+          time:  n.time  ? new Date(n.time) : new Date(),
+        }))
+      );
+    }
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
 /* ─── Trade Routes ────────────────────────────────────────────── */
 
 // POST /api/trades
@@ -218,6 +297,79 @@ app.get('/api/trades/:email', async (req, res) => {
     .find({ userEmail: req.params.email })
     .sort({ time: -1 });
   res.json(trades);
+});
+
+/* ─── Wallet Routes ───────────────────────────────────────────── */
+
+// POST /api/wallet — upsert full wallet balances
+app.post('/api/wallet', async (req, res) => {
+  const { userEmail, balances } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    await Wallet.findOneAndUpdate(
+      { userEmail },
+      { userEmail, balances, updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wallet/:email
+app.get('/api/wallet/:email', async (req, res) => {
+  const w = await Wallet.findOne({ userEmail: req.params.email });
+  res.json({ balances: w?.balances || { USDT: 10000 } });
+});
+
+/* ─── Positions Routes ────────────────────────────────────────── */
+
+// POST /api/positions — upsert full positions array
+app.post('/api/positions', async (req, res) => {
+  const { userEmail, positions } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    // Delete all existing positions for user and replace with new array
+    await Position.deleteMany({ userEmail });
+    if (positions?.length > 0) {
+      await Position.insertMany(positions.map(p => ({ ...p, userEmail })));
+    }
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/positions/:email
+app.get('/api/positions/:email', async (req, res) => {
+  const positions = await Position.find({ userEmail: req.params.email }).sort({ createdAt: -1 });
+  res.json({ positions: positions.map(p => {
+    const obj = p.toObject();
+    delete obj._id; delete obj.__v; delete obj.userEmail; delete obj.updatedAt;
+    return obj;
+  })});
+});
+
+/* ─── Transaction Routes ──────────────────────────────────────── */
+
+// POST /api/txns — upsert full txns array
+app.post('/api/txns', async (req, res) => {
+  const { userEmail, txns } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    await Txn.deleteMany({ userEmail });
+    if (txns?.length > 0) {
+      await Txn.insertMany(txns.map(t => ({ ...t, userEmail })));
+    }
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/txns/:email
+app.get('/api/txns/:email', async (req, res) => {
+  const txns = await Txn.find({ userEmail: req.params.email }).sort({ createdAt: -1 });
+  res.json({ txns: txns.map(t => {
+    const obj = t.toObject();
+    delete obj._id; delete obj.__v; delete obj.userEmail; delete obj.createdAt;
+    return obj;
+  })});
 });
 
 /* ─── Watchlist Routes ────────────────────────────────────────── */
@@ -240,6 +392,30 @@ app.post('/api/watchlist', async (req, res) => {
 app.get('/api/watchlist/:email', async (req, res) => {
   const wl = await Watchlist.findOne({ userEmail: req.params.email });
   res.json({ symbols: wl?.symbols || [] });
+});
+
+/* ─── Chat Session Routes ─────────────────────────────────────── */
+
+// POST /api/chat/sessions — upsert all sessions for a user
+app.post('/api/chat/sessions', async (req, res) => {
+  const { userEmail, sessions } = req.body;
+  if (!userEmail) return res.status(400).json({ error: 'userEmail required' });
+  try {
+    await ChatSession.findOneAndUpdate(
+      { userEmail },
+      { userEmail, sessions: sessions || [], updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/chat/sessions/:email — load sessions for a user
+app.get('/api/chat/sessions/:email', async (req, res) => {
+  try {
+    const doc = await ChatSession.findOne({ userEmail: req.params.email });
+    res.json({ sessions: doc?.sessions || [] });
+  } catch(err) { res.status(500).json({ error: err.message }); }
 });
 
 /* ─── AI Signal proxy (mock — no API key needed) ──────────────── */
