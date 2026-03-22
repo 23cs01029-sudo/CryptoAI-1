@@ -170,6 +170,32 @@ const Login = () => {
 
     localStorage.setItem("user", JSON.stringify(user));
 
+    // Seed welcome notification — only on FIRST ever login (flag never cleared on logout)
+    const userKey = `notifs_seeded_${(user.email || user.phone || 'user')}`;
+    if (!localStorage.getItem(userKey)) {
+      const welcome = {
+        id: Date.now() + Math.random(),
+        type: 'system',
+        title: 'Welcome to CryptoAI! 🎉',
+        body: 'Your account is ready. Explore the Dashboard and place your first trade to get started.',
+        meta: {},
+        read: false,
+        time: new Date().toISOString(),
+      };
+      const list = [welcome];
+      localStorage.setItem('notifications', JSON.stringify(list));
+      localStorage.setItem(userKey, '1');
+      // Also push to MongoDB
+      const userEmail = user.email || user.phone;
+      if (userEmail) {
+        fetch(`${API_BASE}/api/notifications/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userEmail, notifications: list }),
+        }).catch(() => {});
+      }
+    }
+
     // Save to MongoDB if backend is running (fire and forget)
     try {
       await fetch(`${API_BASE}/api/auth/save-user`, {
@@ -226,8 +252,6 @@ const Login = () => {
             0 28px 56px rgba(100,140,210,.11),inset 0 1px 0 rgba(255,255,255,.96);
           animation:rise .45s cubic-bezier(.22,1,.36,1) both;}
         @media(max-width:440px){.card{width:92vw;padding:32px 20px 28px;}}
-        @media(max-width:400px){.two-col{grid-template-columns:1fr;}}
-        @media(max-width:400px){.two-col{grid-template-columns:1fr;}}
         @keyframes rise{from{opacity:0;transform:translateY(20px) scale(.98);}to{opacity:1;transform:none;}}
         .brand{text-align:center;margin-bottom:18px;font-family:'Sora',sans-serif;font-size:26px;
           font-weight:700;letter-spacing:-.5px;

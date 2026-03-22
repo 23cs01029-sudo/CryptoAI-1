@@ -189,21 +189,7 @@ const Notifications = () => {
     return () => { window.removeEventListener('storage', sync); window.removeEventListener('focus', sync); };
   }, []);
 
-  /* Seed welcome message only once ever */
-  useEffect(() => {
-    const hasSeeded = localStorage.getItem('notifs_seeded');
-    if (!hasSeeded) {
-      const welcome = makeNotif('system',
-        'Welcome to CryptoAI! 🎉',
-        'Your account is ready. Explore the Dashboard and place your first trade to get started.'
-      );
-      const list = [welcome];
-      saveNotifsLocal(list);
-      syncToDB(list);            // ← also push welcome to MongoDB
-      setNotifs(list);
-      localStorage.setItem('notifs_seeded', '1');
-    }
-  }, []);
+  /* Welcome message is seeded in Login.jsx after first OTP verify — not here */
 
   /* Load from MongoDB on mount — merges with localStorage */
   useEffect(() => {

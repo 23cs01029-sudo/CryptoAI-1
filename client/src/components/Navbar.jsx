@@ -552,7 +552,6 @@ const Navbar = ({ notifCount = 0 }) => {
               localStorage.removeItem('wallet_txns');
               localStorage.removeItem('watchlist');
               localStorage.removeItem('notifications');
-              localStorage.removeItem('notifs_seeded');
               navigate('/');
             }}
             style={{
@@ -698,7 +697,6 @@ const Navbar = ({ notifCount = 0 }) => {
             localStorage.removeItem('wallet_txns');
             localStorage.removeItem('watchlist');
             localStorage.removeItem('notifications');
-            localStorage.removeItem('notifs_seeded');
             setSidebarOpen(false);
             navigate('/');
           }}

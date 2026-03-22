@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
 const API_BASE = process.env.NODE_ENV === 'production'
   ? 'https://cryptoai-server.onrender.com'
@@ -170,7 +170,7 @@ const runStrategy = (stratId, candles, initCapital = 10000) => {
   if (stratId === 'sma_cross') {
     const sma20 = calcSMA(closes, 20);
     const sma50 = calcSMA(closes, 50);
-    for (let i = 51; i < closes.length; i++) {
+    for (let i = 50; i < closes.length; i++) {
       if (!sma20[i] || !sma50[i] || !sma20[i-1] || !sma50[i-1]) continue;
       if (!position && sma20[i-1] <= sma50[i-1] && sma20[i] > sma50[i])
         open(i, closes[i], 'SMA20 crossed above SMA50');
@@ -195,12 +195,13 @@ const runStrategy = (stratId, candles, initCapital = 10000) => {
     }
   } else if (stratId === 'bb') {
     const bb = calcBB(closes);
-    for (let i = 20; i < closes.length; i++) {
-      if (!bb[i].lower) continue;
-      if (!position && closes[i] <= bb[i].lower)
-        open(i, closes[i], 'Price touched lower Bollinger Band');
-      else if (position && closes[i] >= bb[i].upper)
-        close(i, closes[i], 'Price touched upper Bollinger Band');
+    for (let i = 21; i < closes.length; i++) {
+      if (!bb[i-1].lower || !bb[i-1].upper) continue;
+      // Use previous candle's bands to avoid lookahead bias
+      if (!position && closes[i-1] <= bb[i-1].lower)
+        open(i, closes[i], 'Price below lower Bollinger Band');
+      else if (position && closes[i-1] >= bb[i-1].upper)
+        close(i, closes[i], 'Price above upper Bollinger Band');
     }
   } else if (stratId === 'ema_rsi') {
     const ema20 = calcEMA(closes, 20);
@@ -217,12 +218,22 @@ const runStrategy = (stratId, candles, initCapital = 10000) => {
   // Close any open position at last candle
   if (position) close(closes.length - 1, closes[closes.length - 1], 'End of period');
 
-  // Build equity curve
-  let eq = initCapital;
-  const equity = candles.map((c, i) => {
-    const closedHere = trades.filter(t => t.exitIdx === i);
-    closedHere.forEach(t => { eq += t.pnl; });
-    return { time: c.time, value: eq };
+  // Build equity curve with mark-to-market (unrealised P&L shown while position open)
+  let realised = 0;
+  // Build a position history so we can look up open positions at each candle
+  const posHistory = trades.map(t => ({
+    entryIdx:   t.entryIdx,
+    exitIdx:    t.exitIdx,
+    entryPrice: t.entryPrice,
+    qty:        t.qty,
+  }));
+  const equity = candles.map((candle, i) => {
+    // Add realised P&L from trades that closed at this candle
+    trades.filter(t => t.exitIdx === i).forEach(t => { realised += t.pnl; });
+    // Check if there is an open position at this candle (entered but not yet exited)
+    const openPos = posHistory.find(p => p.entryIdx <= i && p.exitIdx > i);
+    const unrealised = openPos ? (candle.close - openPos.entryPrice) * openPos.qty : 0;
+    return { time: candle.time, value: initCapital + realised + unrealised };
   });
 
   const wins       = trades.filter(t => t.win);
@@ -338,8 +349,6 @@ const Backtesting = () => {
   const [error,       setError]       = useState('');
   const [activeTab,   setActiveTab]   = useState('summary'); // summary | trades | indicators
   const [candles,     setCandles]     = useState([]);
-  const abortRef = useRef(null);
-
   const runBacktest = useCallback(async () => {
     setLoading(true);
     setError('');
