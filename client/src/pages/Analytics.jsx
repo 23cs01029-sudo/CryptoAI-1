@@ -285,6 +285,7 @@ const Analytics = () => {
   });
 
   // RSI-like indicator (simplified from recent closes)
+  // eslint-disable-next-line no-unused-vars
   const computeRSI = (coin) => {
     const coinPos = closed.filter(p => p.coin === coin);
     if (coinPos.length < 3) return null;

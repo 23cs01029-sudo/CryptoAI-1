@@ -488,7 +488,6 @@ const Trades = () => {
   const location = useLocation();
 
   const [selected,   setSelected]   = useState(null);
-  const [initTrade,  setInitTrade]  = useState(null); // 'BUY'|'SELL'|null
   const [chartData,  setChartData]  = useState([]);
   const [candles,    setCandles]    = useState([]);
   const [chartType,  setChartType]  = useState('candle');
@@ -786,8 +785,6 @@ const Trades = () => {
   // Portfolio overall % gain on open positions
   const totalOpenPct    = totalInvested>0?((totalCurrent-totalInvested)/totalInvested*100):0;
   // Overall P&L % including realised
-  const totalAllPct     = (totalInvested+Math.abs(totalRealised))>0
-    ?((totalUnrealised+totalRealised)/(totalInvested||1)*100):0;
 
   const holdings = Object.entries(wallet)
     .filter(([k])=>k!=='USDT'&&wallet[k]>0.000001)
@@ -797,8 +794,8 @@ const Trades = () => {
       const cur=sym?(prices[sym]||0):0;
       // Cost basis: total bought minus total sold proceeds for this coin
       // This gives the true average cost of what you currently hold
-      const buyAmt  = txns.filter(t=>t.type==='BUY' &&t.note?.includes(` ${coin} `)||t.note?.includes(` ${coin}@`)).reduce((s,t)=>s+(t.amount||0),0);
-      const sellAmt = txns.filter(t=>t.type==='SELL'&&t.note?.includes(` ${coin} `)||t.note?.includes(` ${coin}@`)).reduce((s,t)=>s+(t.amount||0),0);
+      const buyAmt  = txns.filter(t=>t.type==='BUY' &&(t.note?.includes(` ${coin} `)||t.note?.includes(` ${coin}@`))).reduce((s,t)=>s+(t.amount||0),0);
+      const sellAmt = txns.filter(t=>t.type==='SELL'&&(t.note?.includes(` ${coin} `)||t.note?.includes(` ${coin}@`))).reduce((s,t)=>s+(t.amount||0),0);
       // Cost basis of remaining holdings = total spent - proceeds from partial sales
       const costBasis = Math.max(0, buyAmt - sellAmt);
       // Average buy price per coin

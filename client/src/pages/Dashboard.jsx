@@ -39,13 +39,7 @@ const syncPositions = (positions) => {
   }).catch(()=>{});
 };
 
-const syncTxns = (txns) => {
-  const userEmail = getUserEmail(); if (!userEmail) return;
-  fetch('/api/txns', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ userEmail, txns }),
-  }).catch(()=>{});
-};
+
 
 const syncTrade = (type, coin, symbol, qty, price, pnl=0) => {
   const userEmail = getUserEmail(); if (!userEmail) return;
